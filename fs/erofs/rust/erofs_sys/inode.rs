@@ -1,3 +1,7 @@
+// Copyright 2024 Yiyang Wu
+// SPDX-License-Identifier: MIT or GPL-2.0-or-later
+
+use super::superblock::*;
 use super::xattrs::*;
 use super::*;
 use core::ffi::*;
@@ -293,3 +297,105 @@ impl InodeInfo {
 pub(crate) type CompactInodeInfoBuf = [u8; size_of::<CompactInodeInfo>()];
 pub(crate) type ExtendedInodeInfoBuf = [u8; size_of::<ExtendedInodeInfo>()];
 pub(crate) const DEFAULT_INODE_BUF: ExtendedInodeInfoBuf = [0; size_of::<ExtendedInodeInfo>()];
+
+/// The inode trait which represents the inode in the filesystem.
+pub(crate) trait Inode: Sized {
+    fn new(_sb: &SuperBlock, info: InodeInfo, nid: Nid) -> Self;
+    fn info(&self) -> &InodeInfo;
+    fn nid(&self) -> Nid;
+}
+
+/// Represents the error which occurs when trying to convert the inode.
+#[derive(Debug)]
+pub(crate) enum InodeError {
+    VersionError,
+    PosixError(Errno),
+}
+
+impl TryFrom<CompactInodeInfoBuf> for CompactInodeInfo {
+    type Error = InodeError;
+    fn try_from(value: CompactInodeInfoBuf) -> Result<Self, Self::Error> {
+        let inode: CompactInodeInfo = Self {
+            i_format: Format(u16::from_le_bytes([value[0], value[1]])),
+            i_xattr_icount: u16::from_le_bytes([value[2], value[3]]),
+            i_mode: u16::from_le_bytes([value[4], value[5]]),
+            i_nlink: u16::from_le_bytes([value[6], value[7]]),
+            i_size: u32::from_le_bytes([value[8], value[9], value[10], value[11]]),
+            i_reserved: value[12..16].try_into().unwrap(),
+            i_u: value[16..20].try_into().unwrap(),
+            i_ino: u32::from_le_bytes([value[20], value[21], value[22], value[23]]),
+            i_uid: u16::from_le_bytes([value[24], value[25]]),
+            i_gid: u16::from_le_bytes([value[26], value[27]]),
+            i_reserved2: value[28..32].try_into().unwrap(),
+        };
+        let ifmt = &inode.i_format;
+        match ifmt.version() {
+            Version::Compat => Ok(inode),
+            Version::Extended => Err(InodeError::VersionError),
+            _ => Err(InodeError::PosixError(EOPNOTSUPP)),
+        }
+    }
+}
+
+impl<I> TryFrom<(&dyn FileSystem<I>, Nid)> for InodeInfo
+where
+    I: Inode,
+{
+    type Error = Errno;
+    fn try_from(value: (&dyn FileSystem<I>, Nid)) -> Result<Self, Self::Error> {
+        let f = value.0;
+        let sb = f.superblock();
+        let nid = value.1;
+        let offset = sb.iloc(nid);
+        let accessor = sb.blk_access(offset);
+        let mut buf: ExtendedInodeInfoBuf = DEFAULT_INODE_BUF;
+        f.backend().fill(&mut buf[0..32], offset)?;
+        let compact_buf: CompactInodeInfoBuf = buf[0..32].try_into().unwrap();
+        let r: Result<CompactInodeInfo, InodeError> = CompactInodeInfo::try_from(compact_buf);
+        match r {
+            Ok(compact) => Ok(InodeInfo::Compact(compact)),
+            Err(e) => match e {
+                InodeError::VersionError => {
+                    let gotten = (sb.blksz() - accessor.off + 32).min(64);
+                    f.backend()
+                        .fill(&mut buf[32..(32 + gotten).min(64) as usize], offset + 32)?;
+
+                    if gotten < 32 {
+                        f.backend().fill(
+                            &mut buf[(32 + gotten) as usize..64],
+                            sb.blkpos(sb.blknr(offset) + 1),
+                        )?;
+                    }
+                    Ok(InodeInfo::Extended(ExtendedInodeInfo {
+                        i_format: Format(u16::from_le_bytes([buf[0], buf[1]])),
+                        i_xattr_icount: u16::from_le_bytes([buf[2], buf[3]]),
+                        i_mode: u16::from_le_bytes([buf[4], buf[5]]),
+                        i_reserved: buf[6..8].try_into().unwrap(),
+                        i_size: u64::from_le_bytes([
+                            buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
+                        ]),
+                        i_u: buf[16..20].try_into().unwrap(),
+                        i_ino: u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]),
+                        i_uid: u32::from_le_bytes([buf[24], buf[25], buf[26], buf[27]]),
+                        i_gid: u32::from_le_bytes([buf[28], buf[29], buf[30], buf[31]]),
+                        i_mtime: u64::from_le_bytes([
+                            buf[32], buf[33], buf[34], buf[35], buf[36], buf[37], buf[38], buf[39],
+                        ]),
+                        i_mtime_nsec: u32::from_le_bytes([buf[40], buf[41], buf[42], buf[43]]),
+                        i_nlink: u32::from_le_bytes([buf[44], buf[45], buf[46], buf[47]]),
+                        i_reserved2: buf[48..64].try_into().unwrap(),
+                    }))
+                }
+                InodeError::PosixError(e) => Err(e),
+            },
+        }
+    }
+}
+
+/// Represents the inode collection which is a hashmap of inodes.
+pub(crate) trait InodeCollection {
+    type I: Inode + Sized;
+
+    fn iget(&mut self, nid: Nid, filesystem: &dyn FileSystem<Self::I>)
+        -> PosixResult<&mut Self::I>;
+}

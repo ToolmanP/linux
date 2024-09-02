@@ -32,7 +32,7 @@ pub(crate) mod inode;
 pub(crate) mod map;
 pub(crate) mod superblock;
 pub(crate) mod xattrs;
-pub(crate) use errnos::Errno;
+pub(crate) use errnos::{Errno, Errno::*};
 
 /// Helper macro to round up or down a number.
 #[macro_export]

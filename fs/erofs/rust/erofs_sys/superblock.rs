@@ -1,8 +1,14 @@
 // Copyright 2024 Yiyang Wu
 // SPDX-License-Identifier: MIT or GPL-2.0-or-later
 
-use super::*;
+pub(crate) mod mem;
+use alloc::boxed::Box;
 use core::mem::size_of;
+
+use super::data::*;
+use super::devices::*;
+use super::inode::*;
+use super::*;
 
 /// The ondisk superblock structure.
 #[derive(Debug, Clone, Copy, Default)]
@@ -128,5 +134,39 @@ impl SuperBlock {
 
     pub(crate) fn iloc(&self, nid: Nid) -> Off {
         self.blkpos(self.meta_blkaddr) + ((nid as Off) << (5 as Off))
+    }
+}
+
+pub(crate) trait FileSystem<I>
+where
+    I: Inode,
+{
+    fn superblock(&self) -> &SuperBlock;
+    fn backend(&self) -> &dyn Backend;
+    fn as_filesystem(&self) -> &dyn FileSystem<I>;
+    fn device_info(&self) -> &DeviceInfo;
+}
+
+pub(crate) struct SuperblockInfo<I, C, T>
+where
+    I: Inode,
+    C: InodeCollection<I = I>,
+{
+    pub(crate) filesystem: Box<dyn FileSystem<I>>,
+    pub(crate) inodes: C,
+    pub(crate) opaque: T,
+}
+
+impl<I, C, T> SuperblockInfo<I, C, T>
+where
+    I: Inode,
+    C: InodeCollection<I = I>,
+{
+    pub(crate) fn new(fs: Box<dyn FileSystem<I>>, c: C, opaque: T) -> Self {
+        Self {
+            filesystem: fs,
+            inodes: c,
+            opaque,
+        }
     }
 }
