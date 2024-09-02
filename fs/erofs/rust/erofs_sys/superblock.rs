@@ -5,6 +5,7 @@ pub(crate) mod mem;
 use alloc::boxed::Box;
 use core::mem::size_of;
 
+use super::data::raw_iters::*;
 use super::data::*;
 use super::devices::*;
 use super::inode::*;
@@ -274,6 +275,18 @@ where
             _ => todo!(),
         }
     }
+
+    fn mapped_iter<'b, 'a: 'b>(
+        &'a self,
+        inode: &'b I,
+        offset: Off,
+    ) -> PosixResult<Box<dyn BufferMapIter<'a> + 'b>>;
+
+    fn continuous_iter<'a>(
+        &'a self,
+        offset: Off,
+        len: Off,
+    ) -> PosixResult<Box<dyn ContinuousBufferIter<'a> + 'a>>;
 }
 
 pub(crate) struct SuperblockInfo<I, C, T>

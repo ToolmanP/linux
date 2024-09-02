@@ -4,6 +4,69 @@
 use super::super::*;
 use super::*;
 
+pub(crate) struct RefMapIter<'a, 'b, FS, B, I>
+where
+    FS: FileSystem<I>,
+    B: Backend,
+    I: Inode,
+{
+    sb: &'a SuperBlock,
+    backend: &'a B,
+    map_iter: MapIter<'a, 'b, FS, I>,
+}
+
+impl<'a, 'b, FS, B, I> RefMapIter<'a, 'b, FS, B, I>
+where
+    FS: FileSystem<I>,
+    B: Backend,
+    I: Inode,
+{
+    pub(crate) fn new(
+        sb: &'a SuperBlock,
+        backend: &'a B,
+        map_iter: MapIter<'a, 'b, FS, I>,
+    ) -> Self {
+        Self {
+            sb,
+            backend,
+            map_iter,
+        }
+    }
+}
+
+impl<'a, 'b, FS, B, I> Iterator for RefMapIter<'a, 'b, FS, B, I>
+where
+    FS: FileSystem<I>,
+    B: Backend,
+    I: Inode,
+{
+    type Item = PosixResult<RefBuffer<'a>>;
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.map_iter.next() {
+            Some(map) => match map {
+                Ok(m) => {
+                    let accessor = self.sb.blk_access(m.physical.start);
+                    let len = m.physical.len.min(accessor.len);
+                    match self.backend.as_buf(m.physical.start, len) {
+                        Ok(buf) => Some(Ok(buf)),
+                        Err(e) => Some(Err(e)),
+                    }
+                }
+                Err(e) => Some(Err(e)),
+            },
+            None => None,
+        }
+    }
+}
+
+impl<'a, 'b, FS, B, I> BufferMapIter<'a> for RefMapIter<'a, 'b, FS, B, I>
+where
+    FS: FileSystem<I>,
+    B: Backend,
+    I: Inode,
+{
+}
+
 /// Continous Ref Buffer Iterator which iterates over a range of disk addresses within the
 /// the temp block size. Since the temp block is always the same size as page and it will not
 /// overflow.

@@ -1,6 +1,7 @@
 // Copyright 2024 Yiyang Wu
 // SPDX-License-Identifier: MIT or GPL-2.0-or-later
 
+use super::alloc_helper::*;
 use super::data::raw_iters::ref_iter::*;
 use super::*;
 
@@ -31,6 +32,27 @@ where
 
     fn as_filesystem(&self) -> &dyn FileSystem<I> {
         self
+    }
+
+    fn mapped_iter<'b, 'a: 'b>(
+        &'a self,
+        inode: &'b I,
+        offset: Off,
+    ) -> PosixResult<Box<dyn BufferMapIter<'a> + 'b>> {
+        heap_alloc(RefMapIter::new(
+            &self.sb,
+            &self.backend,
+            MapIter::new(self, inode, offset),
+        ))
+        .map(|v| v as Box<dyn BufferMapIter<'a> + 'b>)
+    }
+    fn continuous_iter<'a>(
+        &'a self,
+        offset: Off,
+        len: Off,
+    ) -> PosixResult<Box<dyn ContinuousBufferIter<'a> + 'a>> {
+        heap_alloc(ContinuousRefIter::new(&self.sb, &self.backend, offset, len))
+            .map(|v| v as Box<dyn ContinuousBufferIter<'a> + 'a>)
     }
 
     fn device_info(&self) -> &DeviceInfo {

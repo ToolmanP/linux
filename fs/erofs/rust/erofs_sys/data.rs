@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT or GPL-2.0-or-later
 pub(crate) mod backends;
 pub(crate) mod raw_iters;
+use super::inode::*;
+use super::map::*;
 use super::superblock::*;
 use super::*;
 
