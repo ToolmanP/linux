@@ -19,4 +19,10 @@ pub(crate) type Off = u64;
 pub(crate) type Nid = u64;
 /// Erofs Super Offset to read the ondisk superblock
 pub(crate) const EROFS_SUPER_OFFSET: Off = 1024;
+/// PosixResult as a type alias to kernel::error::Result
+/// to avoid naming conflicts.
+pub(crate) type PosixResult<T> = Result<T, Errno>;
+
+pub(crate) mod errnos;
 pub(crate) mod superblock;
+pub(crate) use errnos::Errno;
