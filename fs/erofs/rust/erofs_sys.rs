@@ -30,6 +30,7 @@ pub(crate) mod dir;
 pub(crate) mod errnos;
 pub(crate) mod inode;
 pub(crate) mod map;
+pub(crate) mod operations;
 pub(crate) mod superblock;
 pub(crate) mod xattrs;
 pub(crate) use errnos::{Errno, Errno::*};

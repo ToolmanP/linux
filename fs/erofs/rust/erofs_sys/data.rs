@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT or GPL-2.0-or-later
 pub(crate) mod backends;
 pub(crate) mod raw_iters;
+use super::dir::*;
 use super::inode::*;
 use super::map::*;
 use super::superblock::*;
@@ -26,6 +27,9 @@ pub(crate) trait Backend {
 /// DirEntries.
 pub(crate) trait Buffer {
     fn content(&self) -> &[u8];
+    fn iter_dir(&self) -> DirCollection<'_> {
+        DirCollection::new(self.content())
+    }
 }
 
 /// Represents a buffer that holds a reference to a slice of data that

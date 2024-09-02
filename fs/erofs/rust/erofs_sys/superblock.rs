@@ -8,6 +8,7 @@ use core::mem::size_of;
 use super::data::raw_iters::*;
 use super::data::*;
 use super::devices::*;
+use super::dir::*;
 use super::inode::*;
 use super::map::*;
 use super::*;
@@ -287,6 +288,64 @@ where
         offset: Off,
         len: Off,
     ) -> PosixResult<Box<dyn ContinuousBufferIter<'a> + 'a>>;
+
+    // Inode related goes here.
+    fn read_inode_info(&self, nid: Nid) -> PosixResult<InodeInfo> {
+        (self.as_filesystem(), nid).try_into()
+    }
+
+    fn find_nid(&self, inode: &I, name: &str) -> PosixResult<Option<Nid>> {
+        for buf in self.mapped_iter(inode, 0)? {
+            for dirent in buf?.iter_dir() {
+                if dirent.dirname() == name.as_bytes() {
+                    return Ok(Some(dirent.desc.nid));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    // Readdir related goes here.
+    fn fill_dentries(
+        &self,
+        inode: &I,
+        offset: Off,
+        emitter: &mut dyn FnMut(Dirent<'_>, Off),
+    ) -> PosixResult<()> {
+        let sb = self.superblock();
+        let accessor = sb.blk_access(offset);
+        if offset > inode.info().file_size() {
+            return Err(EUCLEAN);
+        }
+
+        let map_offset = round!(DOWN, offset, sb.blksz());
+        let blk_offset = round!(UP, accessor.off, size_of::<DirentDesc>() as Off);
+
+        let mut map_iter = self.mapped_iter(inode, map_offset)?;
+        let first_buf = map_iter.next().unwrap()?;
+        let mut collection = first_buf.iter_dir();
+
+        let mut pos: Off = map_offset + blk_offset;
+
+        if blk_offset as usize / size_of::<DirentDesc>() <= collection.total() {
+            collection.skip_dir(blk_offset as usize / size_of::<DirentDesc>());
+            for dirent in collection {
+                emitter(dirent, pos);
+                pos += size_of::<DirentDesc>() as Off;
+            }
+        }
+
+        pos = round!(UP, pos, sb.blksz());
+
+        for buf in map_iter {
+            for dirent in buf?.iter_dir() {
+                emitter(dirent, pos);
+                pos += size_of::<DirentDesc>() as Off;
+            }
+            pos = round!(UP, pos, sb.blksz());
+        }
+        Ok(())
+    }
 }
 
 pub(crate) struct SuperblockInfo<I, C, T>
