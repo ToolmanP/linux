@@ -1,6 +1,8 @@
 // Copyright 2024 Yiyang Wu
 // SPDX-License-Identifier: MIT or GPL-2.0-or-later
 pub(crate) mod backends;
+pub(crate) mod raw_iters;
+use super::superblock::*;
 use super::*;
 
 /// Represent some sort of generic data source. This cound be file, memory or even network.
