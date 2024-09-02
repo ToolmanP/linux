@@ -8,7 +8,10 @@ use core::mem::size_of;
 use super::data::*;
 use super::devices::*;
 use super::inode::*;
+use super::map::*;
 use super::*;
+
+use crate::round;
 
 /// The ondisk superblock structure.
 #[derive(Debug, Clone, Copy, Default)]
@@ -135,6 +138,10 @@ impl SuperBlock {
     pub(crate) fn iloc(&self, nid: Nid) -> Off {
         self.blkpos(self.meta_blkaddr) + ((nid as Off) << (5 as Off))
     }
+    pub(crate) fn chunk_access(&self, format: ChunkFormat, address: Off) -> Accessor {
+        let chunkbits = format.chunkbits() + self.blkszbits as u16;
+        Accessor::new(address, chunkbits as Off)
+    }
 }
 
 pub(crate) trait FileSystem<I>
@@ -145,6 +152,128 @@ where
     fn backend(&self) -> &dyn Backend;
     fn as_filesystem(&self) -> &dyn FileSystem<I>;
     fn device_info(&self) -> &DeviceInfo;
+    fn flatmap(&self, inode: &I, offset: Off, inline: bool) -> MapResult {
+        let sb = self.superblock();
+        let nblocks = sb.blk_round_up(inode.info().file_size());
+        let blkaddr = match inode.info().spec() {
+            Spec::RawBlk(blkaddr) => Ok(blkaddr),
+            _ => Err(EUCLEAN),
+        }?;
+
+        let lastblk = if inline { nblocks - 1 } else { nblocks };
+        if offset < sb.blkpos(lastblk) {
+            let len = inode.info().file_size().min(sb.blkpos(lastblk)) - offset;
+            Ok(Map {
+                logical: Segment { start: offset, len },
+                physical: Segment {
+                    start: sb.blkpos(blkaddr) + offset,
+                    len,
+                },
+                algorithm_format: 0,
+                device_id: 0,
+                map_type: MapType::Normal,
+            })
+        } else if inline {
+            let len = inode.info().file_size() - offset;
+            let accessor = sb.blk_access(offset);
+            Ok(Map {
+                logical: Segment { start: offset, len },
+                physical: Segment {
+                    start: sb.iloc(inode.nid())
+                        + inode.info().inode_size()
+                        + inode.info().xattr_size()
+                        + accessor.off,
+                    len,
+                },
+                algorithm_format: 0,
+                device_id: 0,
+                map_type: MapType::Meta,
+            })
+        } else {
+            Err(EUCLEAN)
+        }
+    }
+
+    fn chunk_map(&self, inode: &I, offset: Off) -> MapResult {
+        let sb = self.superblock();
+        let chunkformat = match inode.info().spec() {
+            Spec::Chunk(chunkformat) => Ok(chunkformat),
+            _ => Err(EUCLEAN),
+        }?;
+        let accessor = sb.chunk_access(chunkformat, offset);
+
+        if chunkformat.is_chunkindex() {
+            let unit = size_of::<ChunkIndex>() as Off;
+            let pos = round!(
+                UP,
+                self.superblock().iloc(inode.nid())
+                    + inode.info().inode_size()
+                    + inode.info().xattr_size()
+                    + unit * accessor.nr,
+                unit
+            );
+            let mut buf = [0u8; size_of::<ChunkIndex>()];
+            self.backend().fill(&mut buf, pos)?;
+            let chunk_index = ChunkIndex::from(buf);
+            if chunk_index.blkaddr == u32::MAX {
+                Err(EUCLEAN)
+            } else {
+                Ok(Map {
+                    logical: Segment {
+                        start: accessor.base + accessor.off,
+                        len: accessor.len,
+                    },
+                    physical: Segment {
+                        start: sb.blkpos(chunk_index.blkaddr) + accessor.off,
+                        len: accessor.len,
+                    },
+                    algorithm_format: 0,
+                    device_id: chunk_index.device_id & self.device_info().mask,
+                    map_type: MapType::Normal,
+                })
+            }
+        } else {
+            let unit = 4;
+            let pos = round!(
+                UP,
+                sb.iloc(inode.nid())
+                    + inode.info().inode_size()
+                    + inode.info().xattr_size()
+                    + unit * accessor.nr,
+                unit
+            );
+            let mut buf = [0u8; 4];
+            self.backend().fill(&mut buf, pos)?;
+            let blkaddr = u32::from_le_bytes(buf);
+            let len = accessor.len.min(inode.info().file_size() - offset);
+            if blkaddr == u32::MAX {
+                Err(EUCLEAN)
+            } else {
+                Ok(Map {
+                    logical: Segment {
+                        start: accessor.base + accessor.off,
+                        len,
+                    },
+                    physical: Segment {
+                        start: sb.blkpos(blkaddr) + accessor.off,
+                        len,
+                    },
+                    algorithm_format: 0,
+                    device_id: 0,
+                    map_type: MapType::Normal,
+                })
+            }
+        }
+    }
+
+    fn map(&self, inode: &I, offset: Off) -> MapResult {
+        match inode.info().format().layout() {
+            Layout::FlatInline => self.flatmap(inode, offset, true),
+            Layout::FlatPlain => self.flatmap(inode, offset, false),
+            Layout::Chunk => self.chunk_map(inode, offset),
+            _ => todo!(),
+        }
+    }
 }
 
 pub(crate) struct SuperblockInfo<I, C, T>
