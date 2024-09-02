@@ -24,6 +24,7 @@ pub(crate) const EROFS_SUPER_OFFSET: Off = 1024;
 pub(crate) type PosixResult<T> = Result<T, Errno>;
 
 pub(crate) mod errnos;
+pub(crate) mod inode;
 pub(crate) mod superblock;
 pub(crate) mod xattrs;
 pub(crate) use errnos::Errno;
