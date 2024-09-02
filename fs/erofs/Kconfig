@@ -178,3 +178,13 @@ config EROFS_FS_PCPU_KTHREAD_HIPRI
 	  at higher priority.
 
 	  If unsure, say N.
+
+config EROFS_FS_RUST
+	bool "EROFS use RUST Replacement (EXPERIMENTAL)"
+	depends on EROFS_FS && RUST
+	help
+	  This permits EROFS to use EXPERIMENTAL Rust implementation
+	  for EROFS. This should be considered as an experimental
+	  feature for now.
+
+	  If unsure, say N.
