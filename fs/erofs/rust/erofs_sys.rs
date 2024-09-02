@@ -26,6 +26,7 @@ pub(crate) type PosixResult<T> = Result<T, Errno>;
 pub(crate) mod alloc_helper;
 pub(crate) mod data;
 pub(crate) mod devices;
+pub(crate) mod dir;
 pub(crate) mod errnos;
 pub(crate) mod inode;
 pub(crate) mod map;
