@@ -6,7 +6,6 @@
 
 #include <linux/fs.h>
 
-
 typedef u64 erofs_nid_t;
 typedef u64 erofs_off_t;
 /* data type for filesystem-wide blocks number */
@@ -21,4 +20,7 @@ extern void *erofs_alloc_sbi_rust(struct super_block *sb);
 extern void *erofs_free_sbi_rust(struct super_block *sb);
 extern int erofs_iget5_eq_rust(struct inode *inode, void *opaque);
 extern struct inode *erofs_iget_rust(struct super_block *sb, erofs_nid_t nid);
+extern struct dentry *erofs_lookup_rust(struct inode *inode, struct dentry *dentry,
+			      unsigned int flags);
+extern struct dentry *erofs_get_parent_rust(struct dentry *dentry);
 #endif

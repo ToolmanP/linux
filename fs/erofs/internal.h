@@ -442,6 +442,8 @@ int erofs_iget5_eq(struct inode *inode, void *opaque);
 int erofs_iget5_set(struct inode *inode, void *opaque);
 #ifdef CONFIG_EROFS_FS_RUST
 #define erofs_iget erofs_iget_rust
+#define erofs_get_parent erofs_get_parent_rust
+#define erofs_lookup erofs_lookup_rust
 #else
 struct inode *erofs_iget(struct super_block *sb, erofs_nid_t nid);
 #endif

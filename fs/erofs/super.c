@@ -558,6 +558,7 @@ static struct dentry *erofs_fh_to_parent(struct super_block *sb,
 				    erofs_nfs_get_inode);
 }
 
+#ifndef CONFIG_EROFS_FS_RUST
 static struct dentry *erofs_get_parent(struct dentry *child)
 {
 	erofs_nid_t nid;
@@ -569,6 +570,7 @@ static struct dentry *erofs_get_parent(struct dentry *child)
 		return ERR_PTR(err);
 	return d_obtain_alias(erofs_iget(child->d_sb, nid));
 }
+#endif
 
 static const struct export_operations erofs_export_ops = {
 	.encode_fh = generic_encode_ino32_fh,

@@ -7,6 +7,7 @@
 #include "xattr.h"
 #include <trace/events/erofs.h>
 
+#ifndef CONFIG_EROFS_FS_RUST
 struct erofs_qstr {
 	const unsigned char *name;
 	const unsigned char *end;
@@ -214,6 +215,7 @@ static struct dentry *erofs_lookup(struct inode *dir, struct dentry *dentry,
 		inode = erofs_iget(dir->i_sb, nid);
 	return d_splice_alias(inode, dentry);
 }
+#endif
 
 const struct inode_operations erofs_dir_iops = {
 	.lookup = erofs_lookup,
