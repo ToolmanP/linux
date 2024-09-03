@@ -590,9 +590,12 @@ static void erofs_set_sysfs_name(struct super_block *sb)
 static int erofs_fc_fill_super(struct super_block *sb, struct fs_context *fc)
 {
 	struct inode *inode;
-	struct erofs_sb_info *sbi = EROFS_SB(sb);
+	struct erofs_sb_info *sbi;
 	int err;
-
+#ifdef CONFIG_EROFS_FS_RUST
+	sb->s_fs_info = erofs_alloc_sbi_rust(sb);
+#endif
+	sbi = EROFS_SB(sb);
 	sb->s_magic = EROFS_SUPER_MAGIC;
 	sb->s_flags |= SB_RDONLY | SB_NOATIME;
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
@@ -816,7 +819,13 @@ static int erofs_init_fs_context(struct fs_context *fc)
 
 static void erofs_kill_sb(struct super_block *sb)
 {
-	struct erofs_sb_info *sbi = EROFS_SB(sb);
+	struct erofs_sb_info *sbi;
+
+#ifdef CONFIG_EROFS_FS_RUST
+	sbi = erofs_free_sbi_rust(sb);
+#else
+	sbi = EROFS_SB(sb);
+#endif
 
 	if ((IS_ENABLED(CONFIG_EROFS_FS_ONDEMAND) && sbi->fsid) || sbi->fdev)
 		kill_anon_super(sb);

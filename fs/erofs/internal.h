@@ -20,6 +20,10 @@
 #include <linux/iomap.h>
 #include "erofs_fs.h"
 
+#ifdef CONFIG_EROFS_FS_RUST
+#include "rust_bindings.h"
+#endif
+
 /* redefine pr_fmt "erofs: " */
 #undef pr_fmt
 #define pr_fmt(fmt) "erofs: " fmt
@@ -178,8 +182,14 @@ struct erofs_sb_info {
 	char *domain_id;
 };
 
+#ifdef CONFIG_EROFS_FS_RUST
+#define EROFS_SB(sb) (*(struct erofs_sb_info **)(((void *)((sb)->s_fs_info)) + \
+		      EROFS_SB_INFO_OFFSET_RUST))
+#define EROFS_I_SB(inode) EROFS_SB((inode)->i_sb)
+#else
 #define EROFS_SB(sb) ((struct erofs_sb_info *)(sb)->s_fs_info)
 #define EROFS_I_SB(inode) ((struct erofs_sb_info *)(inode)->i_sb->s_fs_info)
+#endif
 
 /* Mount flags set via mount options or defaults */
 #define EROFS_MOUNT_XATTR_USER		0x00000010
