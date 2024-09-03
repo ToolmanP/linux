@@ -25,4 +25,16 @@ pub(crate) type PosixResult<T> = Result<T, Errno>;
 
 pub(crate) mod errnos;
 pub(crate) mod superblock;
+pub(crate) mod xattrs;
 pub(crate) use errnos::Errno;
+
+/// Helper macro to round up or down a number.
+#[macro_export]
+macro_rules! round {
+    (UP, $x: expr, $y: expr) => {
+        ($x + $y - 1) / $y * $y
+    };
+    (DOWN, $x: expr, $y: expr) => {
+        ($x / $y) * $y
+    };
+}
