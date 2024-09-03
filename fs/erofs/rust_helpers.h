@@ -17,5 +17,7 @@ void *erofs_read_metabuf_rust_helper(struct super_block *sb,
 				     struct erofs_sb_info *sbi,
 				     erofs_off_t offset);
 void erofs_put_metabuf_rust_helper(void *addr);
-
+extern int erofs_fill_inode_rust(struct inode *inode, erofs_nid_t nid);
+struct inode *erofs_iget_locked_rust_helper(struct super_block *sb,
+						   erofs_nid_t nid);
 #endif

@@ -6,7 +6,19 @@
 
 #include <linux/fs.h>
 
+
+typedef u64 erofs_nid_t;
+typedef u64 erofs_off_t;
+/* data type for filesystem-wide blocks number */
+typedef u32 erofs_blk_t;
+
 extern const unsigned long EROFS_SB_INFO_OFFSET_RUST;
+extern const unsigned int EROFS_INODE_SIZE_RUST;
+extern const unsigned long EROFS_VFS_INODE_OFFSET_RUST;
+extern const long EROFS_I_OFFSET_RUST;
+
 extern void *erofs_alloc_sbi_rust(struct super_block *sb);
 extern void *erofs_free_sbi_rust(struct super_block *sb);
+extern int erofs_iget5_eq_rust(struct inode *inode, void *opaque);
+extern struct inode *erofs_iget_rust(struct super_block *sb, erofs_nid_t nid);
 #endif

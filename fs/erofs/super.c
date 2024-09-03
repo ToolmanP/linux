@@ -81,22 +81,23 @@ static int erofs_superblock_csum_verify(struct super_block *sb, void *sbdata)
 
 static void erofs_inode_init_once(void *ptr)
 {
-	struct erofs_inode *vi = ptr;
-
-	inode_init_once(&vi->vfs_inode);
+	inode_init_once(EROFS_I_VFS(ptr));
+	erofs_init_inode_rust(EROFS_I_VFS(ptr));
 }
 
 static struct inode *erofs_alloc_inode(struct super_block *sb)
 {
-	struct erofs_inode *vi =
+	void *ptr =
 		alloc_inode_sb(sb, erofs_inode_cachep, GFP_KERNEL);
 
-	if (!vi)
+	if (!ptr)
 		return NULL;
 
+#ifndef CONFIG_EROFS_FS_RUST
 	/* zero out everything except vfs_inode */
-	memset(vi, 0, offsetof(struct erofs_inode, vfs_inode));
-	return &vi->vfs_inode;
+	memset(ptr, 0, offsetof(struct erofs_inode, vfs_inode));
+#endif
+	return EROFS_I_VFS(ptr);
 }
 
 static void erofs_free_inode(struct inode *inode)
@@ -106,7 +107,12 @@ static void erofs_free_inode(struct inode *inode)
 	if (inode->i_op == &erofs_fast_symlink_iops)
 		kfree(inode->i_link);
 	kfree(vi->xattr_shared_xattrs);
+	erofs_free_inode_rust(inode);
+#ifdef CONFIG_EROFS_FS_RUST
+	kmem_cache_free(erofs_inode_cachep, EROFS_I_RUST(inode));
+#else
 	kmem_cache_free(erofs_inode_cachep, vi);
+#endif
 }
 
 /* read variable-sized metadata, offset will be aligned by 4-byte */
@@ -878,12 +884,24 @@ static int __init erofs_module_init(void)
 
 	erofs_check_ondisk_layout_definitions();
 
+#ifndef CONFIG_EROFS_FS_RUST
 	erofs_inode_cachep = kmem_cache_create("erofs_inode",
 			sizeof(struct erofs_inode), 0,
 			SLAB_RECLAIM_ACCOUNT | SLAB_ACCOUNT,
 			erofs_inode_init_once);
+#else
+	erofs_inode_cachep = kmem_cache_create("erofs_inode_rust",
+			EROFS_INODE_SIZE_RUST, 0,
+			SLAB_RECLAIM_ACCOUNT | SLAB_ACCOUNT,
+			erofs_inode_init_once);
+#endif
+
 	if (!erofs_inode_cachep)
 		return -ENOMEM;
+
+	err = erofs_init_rust();
+	if(err)
+		goto rust_err;
 
 	err = erofs_init_shrinker();
 	if (err)
@@ -911,6 +929,8 @@ zip_err:
 	erofs_exit_shrinker();
 shrinker_err:
 	kmem_cache_destroy(erofs_inode_cachep);
+rust_err:
+	erofs_destroy_rust();
 	return err;
 }
 

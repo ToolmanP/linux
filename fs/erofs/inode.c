@@ -269,7 +269,7 @@ int erofs_fill_inode(struct inode *inode)
  * ino_t is 32-bits on 32-bit arch. We have to squash the 64-bit value down
  * so that it will fit.
  */
-static ino_t erofs_squash_ino(erofs_nid_t nid)
+ino_t erofs_squash_ino(erofs_nid_t nid)
 {
 	ino_t ino = (ino_t)nid;
 
@@ -278,12 +278,12 @@ static ino_t erofs_squash_ino(erofs_nid_t nid)
 	return ino;
 }
 
-static int erofs_iget5_eq(struct inode *inode, void *opaque)
+int erofs_iget5_eq(struct inode *inode, void *opaque)
 {
 	return EROFS_I(inode)->nid == *(erofs_nid_t *)opaque;
 }
 
-static int erofs_iget5_set(struct inode *inode, void *opaque)
+int erofs_iget5_set(struct inode *inode, void *opaque)
 {
 	const erofs_nid_t nid = *(erofs_nid_t *)opaque;
 
@@ -292,6 +292,7 @@ static int erofs_iget5_set(struct inode *inode, void *opaque)
 	return 0;
 }
 
+#ifndef CONFIG_EROFS_FS_RUST
 struct inode *erofs_iget(struct super_block *sb, erofs_nid_t nid)
 {
 	struct inode *inode;
@@ -312,6 +313,7 @@ struct inode *erofs_iget(struct super_block *sb, erofs_nid_t nid)
 	}
 	return inode;
 }
+#endif
 
 int erofs_getattr(struct mnt_idmap *idmap, const struct path *path,
 		  struct kstat *stat, u32 request_mask,

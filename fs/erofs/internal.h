@@ -306,10 +306,20 @@ struct erofs_inode {
 #endif	/* CONFIG_EROFS_FS_ZIP */
 	};
 	/* the corresponding vfs inode */
+#ifndef CONFIG_EROFS_FS_RUST
 	struct inode vfs_inode;
+#endif
 };
 
+#ifdef CONFIG_EROFS_FS_RUST
+#define EROFS_I(ptr)	(*(struct erofs_inode **)(((void *)(ptr)) + \
+			 EROFS_I_OFFSET_RUST))
+#define EROFS_I_VFS(ptr) ((struct inode *)(((void *)(ptr)) + EROFS_VFS_INODE_OFFSET_RUST))
+#define EROFS_I_RUST(ptr) ((void *)(ptr) - EROFS_VFS_INODE_OFFSET_RUST)
+#else
 #define EROFS_I(ptr)	container_of(ptr, struct erofs_inode, vfs_inode)
+#define EROFS_I_VFS(ptr) (&((struct erofs_inode *)(ptr))->vfs_inode)
+#endif
 
 static inline erofs_off_t erofs_iloc(struct inode *inode)
 {
@@ -427,10 +437,18 @@ void erofs_onlinefolio_init(struct folio *folio);
 void erofs_onlinefolio_split(struct folio *folio);
 void erofs_onlinefolio_end(struct folio *folio, int err);
 int erofs_fill_inode(struct inode *inode);
+ino_t erofs_squash_ino(erofs_nid_t nid);
+int erofs_iget5_eq(struct inode *inode, void *opaque);
+int erofs_iget5_set(struct inode *inode, void *opaque);
+#ifdef CONFIG_EROFS_FS_RUST
+#define erofs_iget erofs_iget_rust
+#else
 struct inode *erofs_iget(struct super_block *sb, erofs_nid_t nid);
+#endif
 int erofs_getattr(struct mnt_idmap *idmap, const struct path *path,
 		  struct kstat *stat, u32 request_mask,
 		  unsigned int query_flags);
+
 int erofs_namei(struct inode *dir, const struct qstr *name,
 		erofs_nid_t *nid, unsigned int *d_type);
 
@@ -536,6 +554,21 @@ static inline void erofs_fscache_unregister_cookie(struct erofs_fscache *fscache
 }
 static inline struct bio *erofs_fscache_bio_alloc(struct erofs_map_dev *mdev) { return NULL; }
 static inline void erofs_fscache_submit_bio(struct bio *bio) {}
+#endif
+
+#ifdef CONFIG_EROFS_FS_RUST
+extern int erofs_init_rust(void);
+extern void erofs_destroy_rust(void);
+extern void erofs_init_inode_rust(struct inode *inode);
+extern void erofs_free_inode_rust(struct inode *inode);
+#else
+static inline int erofs_init_rust(void)
+{
+	return 0;
+}
+static inline void erofs_destroy_rust(void) {}
+static inline void erofs_init_inode_rust(struct inode *inode) {}
+static inline void erofs_free_inode_rust(struct inode *inode) {}
 #endif
 
 #define EFSCORRUPTED    EUCLEAN         /* Filesystem is corrupted */
