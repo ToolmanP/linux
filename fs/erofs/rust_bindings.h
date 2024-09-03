@@ -24,4 +24,8 @@ extern struct dentry *erofs_lookup_rust(struct inode *inode, struct dentry *dent
 			      unsigned int flags);
 extern struct dentry *erofs_get_parent_rust(struct dentry *dentry);
 extern int erofs_readdir_rust(struct file *file, struct dir_context *ctx);
+
+struct erofs_map_blocks;
+extern int erofs_map_blocks_rust(struct inode *inode,
+				 struct erofs_map_blocks *map);
 #endif

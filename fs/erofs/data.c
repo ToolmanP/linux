@@ -293,7 +293,12 @@ static int erofs_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 	map.m_la = offset;
 	map.m_llen = length;
 
+#ifdef CONFIG_EROFS_FS_RUST
+	ret = erofs_map_blocks_rust(inode, &map);
+#else  
 	ret = erofs_map_blocks(inode, &map);
+#endif
+
 	if (ret < 0)
 		return ret;
 
