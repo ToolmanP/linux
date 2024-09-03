@@ -1,8 +1,8 @@
 // Copyright 2024 Yiyang Wu
 // SPDX-License-Identifier: MIT or GPL-2.0-or-later
 
-use super::alloc_helper::*;
 use super::data::raw_iters::ref_iter::*;
+use super::operations::*;
 use super::*;
 
 // Memory Mapped Device/File so we need to have some external lifetime on the backend trait.
@@ -16,6 +16,7 @@ where
     backend: B,
     sb: SuperBlock,
     device_info: DeviceInfo,
+    infixes: Vec<XAttrInfix>,
 }
 
 impl<I, B> FileSystem<I> for KernelFileSystem<B>
@@ -58,6 +59,9 @@ where
     fn device_info(&self) -> &DeviceInfo {
         &self.device_info
     }
+    fn xattr_infixes(&self) -> &Vec<XAttrInfix> {
+        &self.infixes
+    }
 }
 
 impl<B> KernelFileSystem<B>
@@ -68,6 +72,12 @@ where
         let mut buf = SUPERBLOCK_EMPTY_BUF;
         backend.fill(&mut buf, EROFS_SUPER_OFFSET)?;
         let sb: SuperBlock = buf.into();
+        let infixes = get_xattr_infixes(&mut ContinuousRefIter::new(
+            &sb,
+            &backend,
+            sb.xattr_prefix_start as Off,
+            sb.xattr_prefix_count as Off * 4,
+        ))?;
         let device_info = get_device_infos(&mut ContinuousRefIter::new(
             &sb,
             &backend,
@@ -78,6 +88,7 @@ where
             backend,
             sb,
             device_info,
+            infixes,
         })
     }
 }

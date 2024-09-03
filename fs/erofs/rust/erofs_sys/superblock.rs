@@ -3,14 +3,17 @@
 
 pub(crate) mod mem;
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::mem::size_of;
 
+use super::alloc_helper::*;
 use super::data::raw_iters::*;
 use super::data::*;
 use super::devices::*;
 use super::dir::*;
 use super::inode::*;
 use super::map::*;
+use super::xattrs::*;
 use super::*;
 
 use crate::round;
@@ -345,6 +348,149 @@ where
             pos = round!(UP, pos, sb.blksz());
         }
         Ok(())
+    }
+    // Extended attributes goes here.
+    fn xattr_infixes(&self) -> &Vec<XAttrInfix>;
+    // Currently we eagerly initialized all xattrs;
+    fn read_inode_xattrs_shared_entries(
+        &self,
+        nid: Nid,
+        info: &InodeInfo,
+    ) -> PosixResult<XAttrSharedEntries> {
+        let sb = self.superblock();
+        let mut offset = sb.iloc(nid) + info.inode_size();
+        let mut buf = XATTR_ENTRY_SUMMARY_BUF;
+        let mut indexes: Vec<u32> = Vec::new();
+        self.backend().fill(&mut buf, offset)?;
+
+        let header: XAttrSharedEntrySummary = XAttrSharedEntrySummary::from(buf);
+        offset += size_of::<XAttrSharedEntrySummary>() as Off;
+        for buf in self.continuous_iter(offset, (header.shared_count << 2) as Off)? {
+            let data = buf?;
+            extend_from_slice(&mut indexes, unsafe {
+                core::slice::from_raw_parts(
+                    data.content().as_ptr().cast(),
+                    data.content().len() >> 2,
+                )
+            })?;
+        }
+
+        Ok(XAttrSharedEntries {
+            name_filter: header.name_filter,
+            shared_indexes: indexes,
+        })
+    }
+    /// get_xattr
+    fn get_xattr(
+        &self,
+        inode: &I,
+        index: u32,
+        name: &[u8],
+        buffer: &mut Option<&mut [u8]>,
+    ) -> PosixResult<XAttrValue> {
+        let sb = self.superblock();
+        let shared_count = inode.xattrs_shared_entries().shared_indexes.len();
+        let inline_offset = sb.iloc(inode.nid())
+            + inode.info().inode_size() as Off
+            + size_of::<XAttrSharedEntrySummary>() as Off
+            + 4 * shared_count as Off;
+
+        let inline_header_sz =
+            size_of::<XAttrSharedEntrySummary>() as Off + shared_count as Off * 4;
+
+        if inline_header_sz <= inode.info().xattr_size() {
+            let inline_len = inode.info().xattr_size() - inline_header_sz;
+            if let Some(mut inline_provider) =
+                SkippableContinuousIter::try_new(self.continuous_iter(inline_offset, inline_len)?)?
+            {
+                while !inline_provider.eof() {
+                    let header = inline_provider.get_entry_header()?;
+                    match inline_provider.query_xattr_value(
+                        self.xattr_infixes(),
+                        &header,
+                        name,
+                        index,
+                        buffer,
+                    ) {
+                        Ok(value) => return Ok(value),
+                        Err(e) => {
+                            if e != ENODATA {
+                                return Err(e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        for entry_index in inode.xattrs_shared_entries().shared_indexes.iter() {
+            let mut shared_provider = SkippableContinuousIter::try_new(self.continuous_iter(
+                sb.blkpos(self.superblock().xattr_blkaddr) + (*entry_index as Off) * 4,
+                u64::MAX,
+            )?)?
+            .unwrap();
+            let header = shared_provider.get_entry_header()?;
+            match shared_provider.query_xattr_value(
+                self.xattr_infixes(),
+                &header,
+                name,
+                index,
+                buffer,
+            ) {
+                Ok(value) => return Ok(value),
+                Err(e) => {
+                    if e != ENODATA {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        Err(ENODATA)
+    }
+    /// list_xattrs
+    fn list_xattrs(&self, inode: &I, buffer: &mut [u8]) -> PosixResult<usize> {
+        let sb = self.superblock();
+        let shared_count = inode.xattrs_shared_entries().shared_indexes.len();
+        let inline_offset = sb.iloc(inode.nid())
+            + inode.info().inode_size() as Off
+            + size_of::<XAttrSharedEntrySummary>() as Off
+            + shared_count as Off * 4;
+        let inline_header_sz =
+            size_of::<XAttrSharedEntrySummary>() as Off + shared_count as Off * 4;
+        let mut offset = 0;
+
+        if inline_header_sz <= inode.info().xattr_size() {
+            let inline_len = inode.info().xattr_size() - inline_header_sz;
+            if let Some(mut inline_provider) =
+                SkippableContinuousIter::try_new(self.continuous_iter(inline_offset, inline_len)?)?
+            {
+                while !inline_provider.eof() {
+                    let header = inline_provider.get_entry_header()?;
+                    offset += inline_provider.get_xattr_key(
+                        self.xattr_infixes(),
+                        &header,
+                        &mut buffer[offset..],
+                    )?;
+                    inline_provider.skip_xattr_value(&header)?;
+                }
+            }
+        }
+
+        for index in inode.xattrs_shared_entries().shared_indexes.iter() {
+            let mut shared_provider = SkippableContinuousIter::try_new(self.continuous_iter(
+                sb.blkpos(self.superblock().xattr_blkaddr) + (*index as Off) * 4,
+                u64::MAX,
+            )?)?
+            .unwrap();
+            let header = shared_provider.get_entry_header()?;
+            offset += shared_provider.get_xattr_key(
+                self.xattr_infixes(),
+                &header,
+                &mut buffer[offset..],
+            )?;
+        }
+        Ok(offset)
     }
 }
 

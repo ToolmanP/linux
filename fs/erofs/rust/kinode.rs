@@ -11,6 +11,7 @@ use kernel::container_of;
 use super::erofs_sys::errnos::*;
 use super::erofs_sys::inode::*;
 use super::erofs_sys::superblock::*;
+use super::erofs_sys::xattrs::*;
 use super::erofs_sys::*;
 
 extern "C" {
@@ -22,6 +23,7 @@ extern "C" {
 pub(crate) struct KernelInode {
     pub(crate) info: MaybeUninit<InodeInfo>,
     pub(crate) nid: MaybeUninit<Nid>,
+    pub(crate) shared_entries: MaybeUninit<XAttrSharedEntries>,
     pub(crate) k_inode: MaybeUninit<inode>,
     pub(crate) k_opaque: MaybeUninit<*mut c_void>,
 }
@@ -31,6 +33,7 @@ impl Inode for KernelInode {
         Self {
             info: MaybeUninit::uninit(),
             nid: MaybeUninit::uninit(),
+            shared_entries: MaybeUninit::uninit(),
             k_inode: MaybeUninit::uninit(),
             k_opaque: MaybeUninit::uninit(),
         }
@@ -40,6 +43,9 @@ impl Inode for KernelInode {
     }
     fn info(&self) -> &InodeInfo {
         unsafe { self.info.assume_init_ref() }
+    }
+    fn xattrs_shared_entries(&self) -> &XAttrSharedEntries {
+        unsafe { self.shared_entries.assume_init_ref() }
     }
 }
 

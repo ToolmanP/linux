@@ -48,8 +48,13 @@ fn try_fill_inode(k_inode: NonNull<inode>, nid: Nid) -> PosixResult<()> {
     let erofs_inode: &mut KernelInode = unsafe {
         &mut *(container_of!(k_inode.as_ptr(), KernelInode, k_inode) as *mut KernelInode)
     };
-    erofs_inode.info.write(sbi.filesystem.read_inode_info(nid)?);
+    let info = sbi.filesystem.read_inode_info(nid)?;
     erofs_inode.nid.write(nid);
+    erofs_inode.shared_entries.write(
+        sbi.filesystem
+            .read_inode_xattrs_shared_entries(nid, &info)?,
+    );
+    erofs_inode.info.write(info);
     Ok(())
 }
 /// Exported as fill_inode additional fill inode

@@ -1,7 +1,13 @@
 // Copyright 2024 Yiyang Wu
 // SPDX-License-Identifier: MIT or GPL-2.0-or-later
 
+use super::alloc_helper::*;
+use super::data::raw_iters::*;
+use super::*;
+use crate::round;
+
 use alloc::vec::Vec;
+use core::mem::size_of;
 
 /// The header of the xattr entry index.
 /// This is used to describe the superblock's xattrs collection.
@@ -121,4 +127,148 @@ pub(crate) const EROFS_XATTRS_PREFIXS: [&[u8]; 7] = [
 pub(crate) enum XAttrValue {
     Buffer(usize),
     Vec(Vec<u8>),
+}
+
+/// An iterator to read xattrs by comparing the entry's name one by one and reads its value
+/// correspondingly.
+pub(crate) trait XAttrEntriesProvider {
+    fn get_entry_header(&mut self) -> PosixResult<XAttrEntryHeader>;
+    fn get_xattr_key(
+        &mut self,
+        pfs: &[XAttrInfix],
+        header: &XAttrEntryHeader,
+        buffer: &mut [u8],
+    ) -> PosixResult<usize>;
+    fn query_xattr_value(
+        &mut self,
+        pfs: &[XAttrInfix],
+        header: &XAttrEntryHeader,
+        name: &[u8],
+        index: u32,
+        buffer: &mut Option<&mut [u8]>,
+    ) -> PosixResult<XAttrValue>;
+    fn skip_xattr_value(&mut self, header: &XAttrEntryHeader) -> PosixResult<()>;
+}
+impl<'a> XAttrEntriesProvider for SkippableContinuousIter<'a> {
+    fn get_entry_header(&mut self) -> PosixResult<XAttrEntryHeader> {
+        let mut buf: [u8; 4] = [0; 4];
+        self.read(&mut buf).map(|_| XAttrEntryHeader::from(buf))
+    }
+
+    fn get_xattr_key(
+        &mut self,
+        ifs: &[XAttrInfix],
+        header: &XAttrEntryHeader,
+        buffer: &mut [u8],
+    ) -> PosixResult<usize> {
+        let mut cur = if header.name_index.is_long() {
+            let if_index: usize = header.name_index.into();
+            if let Some(infix) = ifs.get(if_index) {
+                let pf_index = infix.prefix_index();
+                let prefix = EROFS_XATTRS_PREFIXS[pf_index as usize];
+                let plen = prefix.len();
+
+                buffer[..plen].copy_from_slice(&prefix[..plen]);
+                buffer[plen..infix.name().len() + plen].copy_from_slice(infix.name());
+
+                plen + infix.name().len()
+            } else {
+                return Err(Errno::ENODATA);
+            }
+        } else {
+            let pf_index: usize = header.name_index.into();
+            let prefix = EROFS_XATTRS_PREFIXS[pf_index];
+            let plen = prefix.len();
+            buffer[..plen].copy_from_slice(&prefix[..plen]);
+            plen
+        };
+
+        self.read(&mut buffer[cur..cur + header.suffix_len as usize])?;
+        cur += header.suffix_len as usize;
+        buffer[cur] = b'\0';
+        Ok(cur + 1)
+    }
+
+    fn query_xattr_value(
+        &mut self,
+        ifs: &[XAttrInfix],
+        header: &XAttrEntryHeader,
+        name: &[u8],
+        index: u32,
+        buffer: &mut Option<&mut [u8]>,
+    ) -> PosixResult<XAttrValue> {
+        let xattr_size = round!(
+            UP,
+            header.suffix_len as Off + header.value_len as Off,
+            size_of::<XAttrEntryHeader>() as Off
+        );
+
+        let cur = if header.name_index.is_long() {
+            let if_index: usize = header.name_index.into();
+
+            if if_index >= ifs.len() {
+                return Err(ENODATA);
+            }
+
+            let infix = ifs.get(if_index).unwrap();
+            let ilen = infix.name().len();
+
+            let pf_index = infix.prefix_index();
+
+            if pf_index >= EROFS_XATTRS_PREFIXS.len() as u8 {
+                return Err(ENODATA);
+            }
+
+            if index != pf_index as u32
+                || name.len() != ilen + header.suffix_len as usize
+                || name[..ilen] != *infix.name()
+            {
+                return Err(ENODATA);
+            }
+            ilen
+        } else {
+            let pf_index: usize = header.name_index.into();
+            if pf_index >= EROFS_XATTRS_PREFIXS.len() {
+                return Err(ENODATA);
+            }
+
+            if pf_index != index as usize || header.suffix_len as usize != name.len() {
+                return Err(ENODATA);
+            }
+            0
+        };
+
+        match self.try_cmp(&name[cur..]) {
+            Ok(()) => match buffer.as_mut() {
+                Some(b) => {
+                    if b.len() < header.value_len as usize {
+                        return Err(ERANGE);
+                    }
+                    self.read(&mut b[..header.value_len as usize])?;
+                    Ok(XAttrValue::Buffer(header.value_len as usize))
+                }
+                None => {
+                    let mut b: Vec<u8> = vec_with_capacity(header.value_len as usize)?;
+                    self.read(&mut b)?;
+                    Ok(XAttrValue::Vec(b))
+                }
+            },
+            Err(skip_err) => match skip_err {
+                SkipCmpError::NotEqual(nvalue) => {
+                    self.skip(xattr_size - nvalue)?;
+                    Err(ENODATA)
+                }
+                SkipCmpError::PosixError(e) => Err(e),
+            },
+        }
+    }
+    fn skip_xattr_value(&mut self, header: &XAttrEntryHeader) -> PosixResult<()> {
+        self.skip(
+            round!(
+                UP,
+                header.suffix_len as Off + header.value_len as Off,
+                size_of::<XAttrEntryHeader>() as Off
+            ) - header.suffix_len as Off,
+        )
+    }
 }

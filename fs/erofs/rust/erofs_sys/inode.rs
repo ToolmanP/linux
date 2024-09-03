@@ -303,6 +303,7 @@ pub(crate) trait Inode: Sized {
     fn new(_sb: &SuperBlock, info: InodeInfo, nid: Nid) -> Self;
     fn info(&self) -> &InodeInfo;
     fn nid(&self) -> Nid;
+    fn xattrs_shared_entries(&self) -> &XAttrSharedEntries;
 }
 
 /// Represents the error which occurs when trying to convert the inode.
