@@ -6,6 +6,7 @@
  */
 #include "internal.h"
 
+#ifndef CONFIG_EROFS_FS_RUST
 static int erofs_fill_dentries(struct inode *dir, struct dir_context *ctx,
 			       void *dentry_blk, struct erofs_dirent *de,
 			       unsigned int nameoff0, unsigned int maxsize)
@@ -92,6 +93,7 @@ static int erofs_readdir(struct file *f, struct dir_context *ctx)
 	erofs_put_metabuf(&buf);
 	return err < 0 ? err : 0;
 }
+#endif
 
 const struct file_operations erofs_dir_fops = {
 	.llseek		= generic_file_llseek,
