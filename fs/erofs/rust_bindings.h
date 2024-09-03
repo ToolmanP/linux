@@ -28,4 +28,12 @@ extern int erofs_readdir_rust(struct file *file, struct dir_context *ctx);
 struct erofs_map_blocks;
 extern int erofs_map_blocks_rust(struct inode *inode,
 				 struct erofs_map_blocks *map);
+extern int erofs_getxattr_rust(struct inode *inode, unsigned int flags,
+			       const char *name, void *buffer, size_t size);
+extern ssize_t erofs_listxattr_rust(struct dentry *dentry, char *buffer,
+			       size_t buffer_size);
+#ifdef CONFIG_EROFS_FS_POSIX_ACL
+extern int erofs_getxattr_nobuf_rust(struct inode *inode, int prefix,
+				 const char *name, char **value);
+#endif
 #endif

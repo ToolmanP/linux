@@ -10,3 +10,6 @@ erofs-$(CONFIG_EROFS_FS_ZIP_ZSTD) += decompressor_zstd.o
 erofs-$(CONFIG_EROFS_FS_BACKED_BY_FILE) += fileio.o
 erofs-$(CONFIG_EROFS_FS_ONDEMAND) += fscache.o
 erofs-$(CONFIG_EROFS_FS_RUST) += super_rs.o inode_rs.o namei_rs.o dir_rs.o data_rs.o rust_helpers.o
+ifeq ($(CONFIG_EROFS_FS_XATTR),y)
+erofs-$(CONFIG_EROFS_FS_RUST) += xattr_rs.o
+endif

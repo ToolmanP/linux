@@ -8,6 +8,7 @@
 #include <linux/xxhash.h>
 #include "xattr.h"
 
+#ifndef CONFIG_EROFS_FS_RUST
 struct erofs_xattr_iter {
 	struct super_block *sb;
 	struct erofs_buf buf;
@@ -122,6 +123,7 @@ out_unlock:
 	clear_and_wake_up_bit(EROFS_I_BL_XATTR_BIT, &vi->flags);
 	return ret;
 }
+#endif
 
 static bool erofs_xattr_user_list(struct dentry *dentry)
 {
@@ -175,6 +177,7 @@ const struct xattr_handler * const erofs_xattr_handlers[] = {
 	NULL,
 };
 
+#ifndef CONFIG_EROFS_FS_RUST
 static int erofs_xattr_copy_to_buffer(struct erofs_xattr_iter *it,
 				      unsigned int len)
 {
@@ -509,8 +512,28 @@ int erofs_xattr_prefixes_init(struct super_block *sb)
 		erofs_xattr_prefixes_cleanup(sb);
 	return ret;
 }
+#endif
 
 #ifdef CONFIG_EROFS_FS_POSIX_ACL
+#ifndef CONFIG_EROFS_FS_RUST
+static int erofs_getxattr_nobuf(struct inode *inode, int prefix,
+				 const char *name, char **value)
+{
+	int rc;
+	char *buf = NULL;
+	rc = erofs_getxattr(inode, prefix, name, NULL, 0);
+	if (rc > 0) {
+		buf = kmalloc(rc, GFP_KERNEL);
+		if (!value)
+			return ENOMEM;
+		rc = erofs_getxattr(inode, prefix, name, buf, rc);
+	}
+	*value = buf;
+	return rc;
+}
+#else
+#define erofs_getxattr_nobuf erofs_getxattr_nobuf_rust
+#endif
 struct posix_acl *erofs_get_acl(struct inode *inode, int type, bool rcu)
 {
 	struct posix_acl *acl;
@@ -531,13 +554,7 @@ struct posix_acl *erofs_get_acl(struct inode *inode, int type, bool rcu)
 		return ERR_PTR(-EINVAL);
 	}
 
-	rc = erofs_getxattr(inode, prefix, "", NULL, 0);
-	if (rc > 0) {
-		value = kmalloc(rc, GFP_KERNEL);
-		if (!value)
-			return ERR_PTR(-ENOMEM);
-		rc = erofs_getxattr(inode, prefix, "", value, rc);
-	}
+	rc = erofs_getxattr_nobuf(inode, prefix, "", &value);
 
 	if (rc == -ENOATTR)
 		acl = NULL;
