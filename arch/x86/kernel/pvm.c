@@ -172,7 +172,7 @@ static unsigned long pvm_read_cr3(void)
 
 static unsigned long pvm_user_pgd(unsigned long pgd)
 {
-	return pgd | BIT(PTI_PGTABLE_SWITCH_BIT) | BIT(X86_CR3_PTI_PCID_USER_BIT);
+	return boot_cpu_has(X86_FEATURE_PTI) ? pgd | BIT(PTI_PGTABLE_SWITCH_BIT) | BIT(X86_CR3_PTI_PCID_USER_BIT) : pgd;
 }
 
 static void pvm_write_cr3(unsigned long val)
