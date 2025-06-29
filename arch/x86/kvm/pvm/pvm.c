@@ -2109,6 +2109,14 @@ static int handle_kvm_hypercall(struct kvm_vcpu *vcpu)
 	return r;
 }
 
+
+static int handle_kvm_translate_gva(struct kvm_vcpu *vcpu, unsigned long gva){
+	gpa_t gpa;
+	gpa = kvm_mmu_gva_to_gpa_read(vcpu, gva, NULL);
+	kvm_rax_write(vcpu, gpa);
+	return 1;
+}
+
 static int handle_exit_syscall(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_pvm *pvm = to_pvm(vcpu);
@@ -2149,9 +2157,12 @@ static int handle_exit_syscall(struct kvm_vcpu *vcpu)
 		return handle_hc_wrmsr(vcpu, a0, a1);
 	case PVM_HC_LOAD_TLS:
 		return handle_hc_load_tls(vcpu, a0, a1, a2);
+	case PVM_HC_TRANS_GVA:
+		return handle_kvm_translate_gva(vcpu, a0);
 	default:
 		return handle_kvm_hypercall(vcpu);
 	}
+
 }
 
 static int handle_exit_debug(struct kvm_vcpu *vcpu)
