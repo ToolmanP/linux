@@ -862,6 +862,15 @@ config PVM_GUEST
 	  This option enables the kernel to run as a PVM guest under the PVM
 	  hypervisor.
 
+config YUI_GUEST
+	bool "Yui Guest support"
+	depends on X86_64 && PVM_GUEST && !ADDRESS_SPACE_ISOLATION
+	default n
+	help
+		This option enables the kernel to run as a yui guest under the Azucat
+		hypervisor. Yui is a lightweight guest kernel that is designed to provide
+		full-fleged kernel functionality while being small, elastic and fast.
+
 config ARCH_CPUIDLE_HALTPOLL
 	def_bool n
 	prompt "Disable host haltpoll when loading haltpoll driver"
