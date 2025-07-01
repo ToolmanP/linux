@@ -127,6 +127,13 @@ config KVM_PVM
 	  To compile this as a module, choose M here: the module
 	  will be called kvm-pvm.
 
+
+config KVM_AZUCAT
+	bool "Azucatainer Virtualization"
+	depends on KVM_PVM
+	help
+			Provides Azucatainer
+
 config KVM_SMM
 	bool "System Management Mode emulation"
 	default y
