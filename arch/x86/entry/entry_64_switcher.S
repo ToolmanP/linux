@@ -137,7 +137,19 @@ SYM_INNER_LABEL(entry_SYSCALL_64_switcher_safe_stack, SYM_L_GLOBAL)
 	pushq	%rdi					/* put rdi on ORIG_RAX */
 
 	/* check if it can do direct switch from umod to smod */
+#ifdef  CONFIG_KVM_AZUCAT
+	movq TSS_extra(pvcs), %rdi
+	cmpq $0, %rdi
+	je .L_no_pvcs
+	movq PVCS_switch_flags(%rdi), %rdi
+	jmp .L_switch
+.L_no_pvcs:
+	movq TSS_extra(switch_flags), %rdi
+.L_switch:
+	testq	$SWITCH_FLAGS_NO_DS_TO_SMOD, %rdi
+#else
 	testq	$SWITCH_FLAGS_NO_DS_TO_SMOD, TSS_extra(switch_flags)
+#endif
 	jnz	.L_switcher_check_return_umod_instruction
 
 	/* Now it must be umod, start to do direct switch from umod to smod */
@@ -151,7 +163,11 @@ SYM_INNER_LABEL(entry_SYSCALL_64_switcher_safe_stack, SYM_L_GLOBAL)
 	movq	%rcx, PVCS_rsp(%rdi)
 
 	/* switch umod to smod (switch_flags & cr3) */
+#ifdef CONFIG_KVM_AZUCAT
+	xorb	$SWITCH_FLAGS_MOD_TOGGLE, PVCS_switch_flags(%rdi)
+#else
 	xorb	$SWITCH_FLAGS_MOD_TOGGLE, TSS_extra(switch_flags)
+#endif
 	movq	TSS_extra(smod_cr3), %rcx
 	movq	%rcx, %cr3
 
@@ -187,7 +203,11 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 	UNWIND_HINT_IRET_REGS offset=8
 
 	/* check if it can do direct switch from smod to umod */
+#ifdef CONFIG_KVM_AZUCAT
+	testq	$SWITCH_FLAGS_NO_DS_TO_UMOD, %rdi
+#else
 	testq	$SWITCH_FLAGS_NO_DS_TO_UMOD, TSS_extra(switch_flags)
+#endif
 	jnz	.L_switcher_return_to_hypervisor
 
 	/*
@@ -208,7 +228,11 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 	movq	%rcx, TSS_extra(smod_rsp)
 
 	/* switch smod to umod (switch_flags & cr3) */
-	xorb	$SWITCH_FLAGS_MOD_TOGGLE, TSS_extra(switch_flags)
+#ifdef	CONFIG_KVM_AZUCAT
+	xorb	$SWITCH_FLAGS_MOD_TOGGLE, PVCS_switch_flags(%rdi)
+#else 
+	xorb    $SWITCH_FLAGS_MOD_TOGGLE, TSS_extra(switch_flags)
+#endif
 	movq	TSS_extra(umod_cr3), %rcx
 	movq	%rcx, %cr3
 

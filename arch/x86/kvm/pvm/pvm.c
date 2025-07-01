@@ -40,6 +40,58 @@ static bool __read_mostly is_intel;
 
 static unsigned long host_idt_base;
 
+static struct pvm_vcpu_struct *pvm_get_vcpu_struct(struct vcpu_pvm *pvm)
+{
+	struct gfn_to_pfn_cache *gpc = &pvm->pvcs_gpc;
+
+	read_lock_irq(&gpc->lock);
+	while (!kvm_gpc_check(gpc, PAGE_SIZE)) {
+		read_unlock_irq(&gpc->lock);
+
+		if (kvm_gpc_refresh(gpc, PAGE_SIZE))
+			return NULL;
+
+		read_lock_irq(&gpc->lock);
+	}
+
+	return (struct pvm_vcpu_struct *)(gpc->khva);
+}
+
+static void pvm_put_vcpu_struct(struct vcpu_pvm *pvm, bool dirty)
+{
+	struct gfn_to_pfn_cache *gpc = &pvm->pvcs_gpc;
+
+	read_unlock_irq(&gpc->lock);
+	if (dirty)
+		mark_page_dirty_in_slot(pvm->vcpu.kvm, gpc->memslot,
+					gpc->gpa >> PAGE_SHIFT);
+}
+
+
+static u64 __pvm_get_rflags(struct vcpu_pvm *pvm)
+{
+	struct pvm_vcpu_struct *pvcs;
+
+	if(!pvm->msr_vcpu_struct)
+		return pvm->rflags;
+	
+	pvcs = pvm->pvcs_gpc.khva;
+	return pvcs->kernel_rflags;
+}
+
+static void __pvm_set_rflags(struct vcpu_pvm *pvm, u64 rflags)
+{
+	struct pvm_vcpu_struct *pvcs;
+
+	if(!pvm->msr_vcpu_struct){
+		pvm->rflags = rflags;
+		return;
+	}
+
+	pvcs = pvm->pvcs_gpc.khva;
+	pvcs->kernel_rflags = rflags;
+}
+
 static inline bool is_smod(struct vcpu_pvm *pvm)
 {
 	unsigned long switch_flags = pvm->switch_flags;
@@ -1265,6 +1317,12 @@ static int pvm_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 			pvm->switch_flags &= ~SWITCH_FLAGS_PVCS_INVALID;
 			if (kvm_gpc_activate(&pvm->pvcs_gpc, data, PAGE_SIZE))
 				kvm_make_request(KVM_REQ_GPC_REFRESH, vcpu);
+#ifdef CONFIG_KVM_AZUCAT
+			struct pvm_vcpu_struct *pvcs = pvm_get_vcpu_struct(pvm);
+			pvcs->switch_flags = pvm->switch_flags;
+			pvcs->kernel_rflags = pvm->rflags;
+			pvm_put_vcpu_struct(pvm, true);
+#endif
 		}
 		break;
 	case MSR_PVM_SUPERVISOR_RSP:
@@ -1513,33 +1571,6 @@ static void update_exception_bitmap(struct kvm_vcpu *vcpu)
 		to_pvm(vcpu)->switch_flags &= ~SWITCH_FLAGS_SINGLE_STEP;
 }
 
-static struct pvm_vcpu_struct *pvm_get_vcpu_struct(struct vcpu_pvm *pvm)
-{
-	struct gfn_to_pfn_cache *gpc = &pvm->pvcs_gpc;
-
-	read_lock_irq(&gpc->lock);
-	while (!kvm_gpc_check(gpc, PAGE_SIZE)) {
-		read_unlock_irq(&gpc->lock);
-
-		if (kvm_gpc_refresh(gpc, PAGE_SIZE))
-			return NULL;
-
-		read_lock_irq(&gpc->lock);
-	}
-
-	return (struct pvm_vcpu_struct *)(gpc->khva);
-}
-
-static void pvm_put_vcpu_struct(struct vcpu_pvm *pvm, bool dirty)
-{
-	struct gfn_to_pfn_cache *gpc = &pvm->pvcs_gpc;
-
-	read_unlock_irq(&gpc->lock);
-	if (dirty)
-		mark_page_dirty_in_slot(pvm->vcpu.kvm, gpc->memslot,
-					gpc->gpa >> PAGE_SHIFT);
-}
-
 static void pvm_vcpu_gpc_refresh(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_pvm *pvm = to_pvm(vcpu);
@@ -1587,8 +1618,11 @@ static int __do_pvm_event(struct kvm_vcpu *vcpu, bool user, int vector,
 
 	pvcs = pvm_get_vcpu_struct(pvm);
 	if (!pvcs || (!user && !(pvcs->event_flags & PVM_EVENT_FLAGS_EF))) {
+		//supervisor mode and event delivery is masked
 		if (pvcs)
 			pvm_put_vcpu_struct(pvm, false);
+		pr_info("Triple fault in PVM mode, vcpu_struct: 0x%lx, event_flags: 0x%llx, user: %d\n",
+			pvm->msr_vcpu_struct, pvcs ? pvcs->event_flags : 0, user);
 		kvm_make_request(KVM_REQ_TRIPLE_FAULT, vcpu);
 		return 1;
 	}
@@ -1619,6 +1653,7 @@ static int __do_pvm_event(struct kvm_vcpu *vcpu, bool user, int vector,
 	pvcs->event_flags &= ~(PVM_EVENT_FLAGS_EF | PVM_EVENT_FLAGS_EP | PVM_EVENT_FLAGS_IF);
 	if (vector >= 32)
 		pvcs->event_flags &= ~PVM_EVENT_FLAGS_IP;
+	__pvm_set_rflags(pvm, X86_EFLAGS_FIXED);
 	pvm_put_vcpu_struct(pvm, true);
 
 	if (user)
@@ -1636,7 +1671,6 @@ static int __do_pvm_event(struct kvm_vcpu *vcpu, bool user, int vector,
 	// Change rip, rflags, rcx and r11 per PVM event delivery specification,
 	// this allows to use sysret in VM enter.
 	kvm_rip_write(vcpu, entry);
-	pvm->rflags = X86_EFLAGS_FIXED;
 	kvm_rcx_write(vcpu, entry);
 	kvm_r11_write(vcpu, X86_EFLAGS_IF | X86_EFLAGS_FIXED);
 	kvm_make_request(KVM_REQ_EVENT, vcpu);
@@ -1665,15 +1699,15 @@ static int do_pvm_event(struct kvm_vcpu *vcpu, int vector,
 
 static unsigned long pvm_get_rflags(struct kvm_vcpu *vcpu)
 {
-	return to_pvm(vcpu)->rflags;
+	return __pvm_get_rflags(to_pvm(vcpu));
 }
 
 static void pvm_set_rflags(struct kvm_vcpu *vcpu, unsigned long rflags)
 {
 	struct vcpu_pvm *pvm = to_pvm(vcpu);
-	int need_update = !!((pvm->rflags ^ rflags) & X86_EFLAGS_IF);
+	int need_update = !!((__pvm_get_rflags(pvm) ^ rflags) & X86_EFLAGS_IF);
 
-	pvm->rflags = rflags;
+	__pvm_set_rflags(pvm, rflags);
 
 	/*
 	 * The IF bit of 'pvcs->event_flags' should not be changed in user
@@ -1812,13 +1846,22 @@ static int handle_synthetic_instruction_return(struct kvm_vcpu *vcpu, bool user)
 	kvm_rsp_write(vcpu, pvcs->rsp);
 	kvm_rcx_write(vcpu, pvcs->rcx);
 	kvm_r11_write(vcpu, pvcs->r11);
+
+#ifdef CONFIG_KVM_AZUCAT
+	pvcs->kernel_rflags = pvcs->eflags;
+#else
 	pvm->rflags = pvcs->eflags;
+#endif
 
 	if (user) {
 		pvm->hw_cs = pvcs->user_cs | USER_RPL;
 		pvm->hw_ss = pvcs->user_ss | USER_RPL;
 		pvm_write_guest_gs_base(pvm, pvcs->user_gsbase);
+#ifdef CONFIG_KVM_AZUCAT
+		pvcs->kernel_rflags |= X86_EFLAGS_IF;
+#else
 		pvm->rflags |= X86_EFLAGS_IF;
+#endif
 	}
 
 	pvm_set_nmi_mask(vcpu, false);
@@ -2547,7 +2590,8 @@ static __always_inline unsigned long pvm_eff_dr7(struct kvm_vcpu *vcpu)
 }
 
 // Save guest registers from host sp0 or IST stack.
-static __always_inline void save_regs(struct kvm_vcpu *vcpu, struct pt_regs *guest)
+static __always_inline void save_regs(struct kvm_vcpu *vcpu,
+				      struct pt_regs *guest)
 {
 	struct vcpu_pvm *pvm = to_pvm(vcpu);
 
@@ -2568,7 +2612,7 @@ static __always_inline void save_regs(struct kvm_vcpu *vcpu, struct pt_regs *gue
 	vcpu->arch.regs[VCPU_REGS_R14] = guest->r14;
 	vcpu->arch.regs[VCPU_REGS_R15] = guest->r15;
 	vcpu->arch.regs[VCPU_REGS_RIP] = guest->ip;
-	pvm->rflags = guest->flags;
+	__pvm_set_rflags(pvm, guest->flags);
 	pvm->hw_cs = guest->cs;
 	pvm->hw_ss = guest->ss;
 }
@@ -2580,7 +2624,7 @@ static __always_inline void load_regs(struct kvm_vcpu *vcpu, struct pt_regs *gue
 
 	guest->ss = pvm->hw_ss;
 	guest->sp = vcpu->arch.regs[VCPU_REGS_RSP];
-	guest->flags = (pvm->rflags & SWITCH_ENTER_EFLAGS_ALLOWED) | SWITCH_ENTER_EFLAGS_FIXED;
+	guest->flags = (__pvm_get_rflags(pvm) & SWITCH_ENTER_EFLAGS_ALLOWED) | SWITCH_ENTER_EFLAGS_FIXED;
 	guest->cs = pvm->hw_cs;
 	guest->ip = vcpu->arch.regs[VCPU_REGS_RIP];
 	guest->orig_ax = -1;
@@ -2614,12 +2658,21 @@ static noinstr void pvm_vcpu_run_noinstr(struct kvm_vcpu *vcpu)
 	load_regs(vcpu, sp0_regs);
 
 	// Prepare context for direct switching.
-	tss_ex->switch_flags = pvm->switch_flags;
 	tss_ex->pvcs = pvm->pvcs_gpc.khva;
 	tss_ex->retu_rip = pvm->msr_retu_rip_plus2;
 	tss_ex->smod_entry = pvm->msr_lstar;
 	tss_ex->smod_gsbase = pvm->msr_kernel_gs_base;
 	tss_ex->smod_rsp = pvm->msr_supervisor_rsp;
+#ifdef CONFIG_KVM_AZUCAT
+	if (tss_ex->pvcs) {
+		tss_ex->pvcs->switch_flags = pvm->switch_flags;
+		tss_ex->pvcs->kernel_gsbase = pvm->msr_kernel_gs_base;
+	} else {
+		tss_ex->switch_flags = pvm->switch_flags;
+	}
+#else
+	tss_ex->switch_flags = pvm->switch_flags;
+#endif
 
 	if (unlikely(pvm->guest_dr7 & DR7_BP_EN_MASK))
 		set_debugreg(pvm_eff_dr7(vcpu), 7);
@@ -2629,7 +2682,14 @@ static noinstr void pvm_vcpu_run_noinstr(struct kvm_vcpu *vcpu)
 
 	// Get the resulted mode and PVM MSRs which might be changed
 	// when direct switching.
+#ifdef CONFIG_KVM_AZUCAT
+	if (tss_ex->pvcs)
+		pvm->switch_flags = tss_ex->pvcs->switch_flags;
+	else
+		pvm->switch_flags = tss_ex->switch_flags;
+#else
 	pvm->switch_flags = tss_ex->switch_flags;
+#endif
 	pvm->msr_supervisor_rsp = tss_ex->smod_rsp;
 
 	// Get the guest registers from the host sp0 stack.
@@ -2763,11 +2823,16 @@ static fastpath_t pvm_vcpu_run(struct kvm_vcpu *vcpu)
 		 * reflected in 'pvcs->event_flags' and can be changed
 		 * directly without triggering a VM exit.
 		 */
-		pvm->rflags &= ~X86_EFLAGS_IF;
+			unsigned long rflags = __pvm_get_rflags(pvm);
+			rflags &= ~X86_EFLAGS_IF;
 		if (likely(pvm->msr_vcpu_struct)) {
 			pvm_set_nmi_mask(vcpu, !(pvcs->event_flags & PVM_EVENT_FLAGS_EF));
-			pvm->rflags |= X86_EFLAGS_IF & pvcs->event_flags;
+			rflags |= X86_EFLAGS_IF & pvcs->event_flags;
+#ifdef CONFIG_KVM_AZUCAT
+			pvcs->kernel_rflags = rflags;
+#endif
 		}
+		pvm->rflags = rflags;
 
 		if (pvm->hw_cs != __USER_CS || pvm->hw_ss != __USER_DS)
 			kvm_make_request(KVM_REQ_TRIPLE_FAULT, vcpu);
@@ -2775,6 +2840,7 @@ static fastpath_t pvm_vcpu_run(struct kvm_vcpu *vcpu)
 
 	pvm_load_host_xsave_state(vcpu);
 
+	/*This makes sure all the updates are synced to the PVCS*/
 	mark_page_dirty_in_slot(vcpu->kvm, pvm->pvcs_gpc.memslot,
 				pvm->pvcs_gpc.gpa >> PAGE_SHIFT);
 
