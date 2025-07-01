@@ -4,6 +4,10 @@
 
 #include <linux/const.h>
 
+#ifdef CONFIG_YUI_GUEST
+#include <asm/page_types.h>
+#endif
+
 /*
  * The CPUID instruction in PVM guest can't be trapped and emulated,
  * so PVM guest should use the following two instructions instead:
@@ -125,8 +129,14 @@ struct pvm_vcpu_struct {
 	u64 rsp;
 	u64 rcx;
 	u64 r11;
+#if defined(CONFIG_YUI_GUEST) || defined(CONFIG_KVM_AZUCAT)
+	u64 kernel_gsbase;
+	u64 switch_flags;
+	u64 kernel_rflags;
+} __aligned(PAGE_SIZE);
+#else
 };
-
+#endif
 #endif /* __ASSEMBLY__ */
 
 #endif /* _UAPI_ASM_X86_PVM_PARA_H */

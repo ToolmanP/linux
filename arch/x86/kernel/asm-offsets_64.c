@@ -88,6 +88,11 @@ int main(void)
 	ENTRY(rip);
 	ENTRY(rcx);
 	ENTRY(r11);
+#if defined(CONFIG_YUI_GUEST) || defined(CONFIG_KVM_AZUCAT)
+	ENTRY(kernel_gsbase);
+	ENTRY(switch_flags);
+	ENTRY(kernel_rflags);
+#endif
 	BLANK();
 #undef ENTRY
 
