@@ -67,6 +67,7 @@
 #include <asm/traps.h>
 #include <asm/sev.h>
 #include <asm/pvm_para.h>
+#include <asm/yui_para.h>
 
 #include "cpu.h"
 
@@ -754,6 +755,7 @@ void __init switch_gdt_and_percpu_base(int cpu)
 	 */
 	wrmsrl(MSR_GS_BASE, cpu_kernelmode_gs_base(cpu));
 	pvm_switch_pvcs(cpu);
+	yui_setup_pvcs(cpu);
 #else
 	/*
 	 * %fs is already set to __KERNEL_PERCPU, but after switching GDT

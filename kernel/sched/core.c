@@ -71,6 +71,10 @@
 # endif
 #endif
 
+#ifdef CONFIG_YUI_GUEST
+#include <asm/yui_para.h>
+#endif
+
 #include <uapi/linux/sched/types.h>
 
 #include <asm/irq_regs.h>
@@ -2548,6 +2552,12 @@ static struct rq *__migrate_task(struct rq *rq, struct rq_flags *rf,
 		return rq;
 
 	rq = move_queued_task(rq, rf, p, dest_cpu);
+
+#ifdef CONFIG_YUI_GUEST
+	if(p->pvcs_tls)
+		/* we need to remap the cpu per variable on to this address with read-write access */
+		yui_remap_pvcs_tls(p, dest_cpu);
+#endif
 
 	return rq;
 }

@@ -68,6 +68,7 @@ static void pvm_put_vcpu_struct(struct vcpu_pvm *pvm, bool dirty)
 }
 
 
+#ifdef CONFIG_KVM_AZUCAT
 static u64 __pvm_get_rflags(struct vcpu_pvm *pvm)
 {
 	struct pvm_vcpu_struct *pvcs;
@@ -91,6 +92,19 @@ static void __pvm_set_rflags(struct vcpu_pvm *pvm, u64 rflags)
 	pvcs = pvm->pvcs_gpc.khva;
 	pvcs->kernel_rflags = rflags;
 }
+#else
+
+static inline u64 __pvm_get_rflags(struct vcpu_pvm *pvm)
+{
+	return pvm->rflags;
+}
+
+static inline void __pvm_set_rflags(struct vcpu_pvm *pvm, u64 rflags)
+{
+	pvm->rflags = rflags;
+}
+
+#endif
 
 static inline bool is_smod(struct vcpu_pvm *pvm)
 {
