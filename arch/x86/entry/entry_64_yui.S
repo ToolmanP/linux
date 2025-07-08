@@ -35,13 +35,11 @@ SYM_CODE_START(entry_DIRECTCALL_64_yui)
 	pushq %r12
 	pvm_enable_events
 	xorq $SWITCH_FLAGS_MOD_TOGGLE, PER_CPU_VAR(pvm_vcpu_struct + PVCS_switch_flags)
-	orq  $SWITCH_ENTER_EFLAGS_FIXED, PER_CPU_VAR(pvm_vcpu_struct + PVCS_kernel_rflags)
 	call do_syscall_64_yui
 
-	andq $(~(X86_EFLAGS_IF)), PER_CPU_VAR(pvm_vcpu_struct + PVCS_kernel_rflags)
 	pvm_disable_events
 	xorq $SWITCH_FLAGS_MOD_TOGGLE, PER_CPU_VAR(pvm_vcpu_struct + PVCS_switch_flags)
-	movq PER_CPU_VAR(pvm_vcpu_struct + PVCS_user_gsbase), %r13
+	movq PER_CPU_VAR(pvm_vcpu_struct + PVCS_user_gsbase_direct), %r13
 	wrgsbase %r13
 	popq %r12
 	popq %r13

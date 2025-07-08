@@ -85,6 +85,7 @@ SYM_FUNC_START(pvm_save_fl)
 SYM_FUNC_END(pvm_save_fl)
 
 SYM_FUNC_START(pvm_irq_disable)
+	btrq	$X86_EFLAGS_IF_BIT, PER_CPU_VAR(pvm_vcpu_struct + PVCS_kernel_rflags)
 	btrq	$X86_EFLAGS_IF_BIT, PER_CPU_VAR(pvm_vcpu_struct + PVCS_event_flags)
 	RET
 SYM_FUNC_END(pvm_irq_disable)
@@ -92,6 +93,7 @@ SYM_FUNC_END(pvm_irq_disable)
 SYM_FUNC_START(pvm_irq_enable)
 	/* set X86_EFLAGS_IF */
 	orq	$X86_EFLAGS_IF, PER_CPU_VAR(pvm_vcpu_struct + PVCS_event_flags)
+	orq $X86_EFLAGS_IF, PER_CPU_VAR(pvm_vcpu_struct + PVCS_kernel_rflags)
 	btq	$PVM_EVENT_FLAGS_IP_BIT, PER_CPU_VAR(pvm_vcpu_struct + PVCS_event_flags)
 	jc	.L_maybe_interrupt_pending
 	RET
