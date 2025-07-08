@@ -133,6 +133,11 @@ struct pvm_vcpu_struct {
 	u64 kernel_gsbase;
 	u64 switch_flags;
 	u64 kernel_rflags;
+	u64 kernel_rsp;
+	u64 user_gsbase_direct;
+	u64 user_rsp_direct;
+	u64 dstack;
+	u64 yui_addr;
 } __aligned(PAGE_SIZE);
 #else
 };

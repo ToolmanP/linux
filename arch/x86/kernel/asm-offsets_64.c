@@ -92,6 +92,11 @@ int main(void)
 	ENTRY(kernel_gsbase);
 	ENTRY(switch_flags);
 	ENTRY(kernel_rflags);
+	ENTRY(kernel_rsp);
+	ENTRY(user_gsbase_direct);
+	ENTRY(user_rsp_direct);
+	ENTRY(dstack);
+	ENTRY(yui_addr);
 #endif
 	BLANK();
 #undef ENTRY

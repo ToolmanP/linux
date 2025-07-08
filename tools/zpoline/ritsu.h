@@ -2,7 +2,7 @@
 #define __RITSU_H
 #include <asm/processor-flags.h>
 #include <asm-generic/unistd.h>
-#include <asm/unistd_64.h>
+#include <asm/unistd.h>
 
 #define __SYS_PVCS_SET_TLS 457
 #define __SYS_YUI_DIRECT 458
@@ -26,6 +26,11 @@
 #define PVCS_kernel_gsbase 128
 #define PVCS_switch_flags 136
 #define PVCS_kernel_rflags 144
+#define PVCS_kernel_rsp 152
+#define PVCS_user_gsbase_direct 160
+#define PVCS_user_rsp_direct 168
+#define PVCS_dstack 176
+#define PVCS_yui_addr 184
 
 #define GDT_ENTRY_DEFAULT_USER_DS 5
 #define GDT_ENTRY_DEFAULT_USER_CS 6
@@ -88,13 +93,18 @@ struct pvm_vcpu_struct {
 	u64 kernel_gsbase;
 	u64 switch_flags;
 	u64 kernel_rflags;
+	u64 kernel_rsp;
+	u64 user_gsbase_direct;
+	u64 user_rsp_direct;
+	u64 dstack;
+	u64 yui_addr;
 } __attribute__((aligned(4096)));
 
 #define PVM_EVENT_FLAGS_EF_BIT 0
 #define PVM_EVENT_FLAGS_IF_BIT 9
 #define PVM_EVENT_FLAGS_EF _BITUL(PVM_EVENT_FLAGS_EF_BIT)
 #define PVM_EVENT_FLAGS_IF _BITUL(PVM_EVENT_FLAGS_IF_BIT)
-
+#define __hidden __attribute__((visibility("hidden")))
 extern long call_azunya(long a1, long a2, long a3, long a4, long a5, long a6,
 			long a7);
 #else

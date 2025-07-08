@@ -56,6 +56,7 @@
 #include <asm/resctrl.h>
 #include <asm/unistd.h>
 #include <asm/fsgsbase.h>
+#include <asm/yui_para.h>
 #ifdef CONFIG_IA32_EMULATION
 /* Not included via unistd.h */
 #include <asm/unistd_32_ia32.h>
@@ -624,6 +625,7 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	 */
 	raw_cpu_write(pcpu_hot.current_task, next_p);
 	raw_cpu_write(pcpu_hot.top_of_stack, task_top_of_stack(next_p));
+	yui_switch_dstack(next_p);
 
 	switch_fpu_finish();
 

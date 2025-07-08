@@ -1546,6 +1546,10 @@ struct task_struct {
 
 #ifdef CONFIG_YUI_GUEST
 	unsigned long pvcs_tls;
+#ifdef CONFIG_VMAP_STACK
+	struct vm_struct *dstack_vm_area;
+#endif
+	void *dstack;
 #endif
 
 	/*

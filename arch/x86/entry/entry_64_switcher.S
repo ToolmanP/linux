@@ -216,7 +216,7 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 	 * at TSS_extra(retu_rip) - 2 in smod as the return-umod instruction.
 	 */
 	cmpq	%rcx, TSS_extra(retu_rip)
-	jne	.L_switcher_return_to_hypervisor
+	jne	.L_switcher_return_to_hypervisor_from_retu
 
 	/* only handle for the most common cs/ss */
 	movq	TSS_extra(pvcs), %rdi
@@ -283,6 +283,11 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 	/* RCX matches for RIP only before RCX is canonicalized, restore RCX and do IRET. */
 	movq	RIP-RIP(%rsp), %rcx
 	jmp	native_irq_return_iret
+
+.L_switcher_return_to_hypervisor_from_retu:
+	/* Switcher and the PVM specification requires the smod RSP to be saved */
+	movq	RSP-ORIG_RAX(%rsp), %rcx
+	movq	%rcx, TSS_extra(smod_rsp)
 
 .L_switcher_return_to_hypervisor:
 	popq	%rdi					/* saved rdi */

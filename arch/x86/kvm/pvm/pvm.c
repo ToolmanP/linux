@@ -2681,6 +2681,10 @@ static noinstr void pvm_vcpu_run_noinstr(struct kvm_vcpu *vcpu)
 	if (tss_ex->pvcs) {
 		tss_ex->pvcs->switch_flags = pvm->switch_flags;
 		tss_ex->pvcs->kernel_gsbase = pvm->msr_kernel_gs_base;
+		tss_ex->pvcs->kernel_rsp = pvm->msr_supervisor_rsp;
+		mark_page_dirty_in_slot(vcpu->kvm, pvm->pvcs_gpc.memslot,
+				pvm->pvcs_gpc.gpa >> PAGE_SHIFT);
+
 	} else {
 		tss_ex->switch_flags = pvm->switch_flags;
 	}

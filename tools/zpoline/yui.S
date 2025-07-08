@@ -19,7 +19,7 @@ jump_to_yui:
   pushq %rcx
   pushq %r8
   pushq %r9
-  pushq 0x8(%rbp) /* arg6 is on the stack.  */
+  pushq 0x10(%rbp) /* arg6 is on the stack.  */
   pushq %r12
   pushq %r13
 
@@ -29,29 +29,15 @@ jump_to_yui:
   movq     %rax, %r12
 
   /* mask the eflags altogether. This should disable all interrupts. */
-  andl $(~(DIRECTCALL_ENTER_MASK)), PVCS_kernel_rflags(%r12)
-
-  pushfq
-  popq %r11
-  andl $(~(DIRECTCALL_ENTER_MASK)), %r11d
-
-  movq %r11, PVCS_kernel_rflags(%r12)
-  movl %r11d, PVCS_eflags(%r12)
-  movq %r11, PVCS_r11(%r12)
+  btrq $X86_EFLAGS_IF_BIT, PVCS_kernel_rflags(%r12)
   
-  /* save the user_ss, user_cs */
-  movl	$((__USER_DS << 16) | __USER_CS), PVCS_user_cs(%r12)
-
   /* save user_gsbase */
   rdgsbase %r13
-  movq %r13, PVCS_user_gsbase(%r12)
-
-  /* save the return address */
-  lea .Lyui_postlogue(%rip), %r13
-  movq %r13, PVCS_rcx(%r12)
+  movq %r13, PVCS_user_gsbase_direct(%r12)
 
   /* save the stack pointer */
-  movq %rbp, PVCS_rsp(%r12)
+  movq %rsp, PVCS_user_rsp_direct(%r12)
+  movq PVCS_dstack(%r12), %rsp
 
   /* setup the kernel gsbase */
   movq PVCS_kernel_gsbase(%r12), %r13
@@ -75,8 +61,8 @@ jump_to_yui:
   pushq   %r11		/* pt_regs->r11 */
   pushq	  %rbx		/* pt_regs->rbx */
   pushq	  %rbp		/* pt_regs->rbp */
-  pushq	  -8*8(%rbp)	/* pt_regs->r12 */
-  pushq	  -9*8(%rbp)	/* pt_regs->r13 */
+  pushq	  %r12		/* pt_regs->r12 */
+  pushq	  %r13		/* pt_regs->r13 */
   pushq	  %r14		/* pt_regs->r14 */
   pushq	  %r15		/* pt_regs->r15 */
 
@@ -86,8 +72,7 @@ jump_to_yui:
   movq %rsp, %rdi
   movslq -1*8(%rbp), %rsi
   /* let's go! */
-  call *yui_direct(%rip)
-  orq  $X86_EFLAGS_IF, PVCS_kernel_rflags(%r12)
+  call *PVCS_yui_addr(%r12)
 
   popq %r15		/* pt_regs->r15 */
   popq %r14		/* pt_regs->r14 */
@@ -105,6 +90,12 @@ jump_to_yui:
   popq %rsi		/* pt_regs->si */
   popq %rdi		/* pt_regs->di */
 
-.Lyui_postlogue:
+  movq PVCS_user_rsp_direct(%r12), %rsp
+  orq  $X86_EFLAGS_IF, PVCS_kernel_rflags(%r12)
+
+  popq %r13
+  popq %r12
+  addq $7*8, %rsp /* discard the syscall arguments */
+
   leave
   ret

@@ -341,6 +341,57 @@ static void free_thread_stack(struct task_struct *tsk)
 
 #  else /* !CONFIG_VMAP_STACK */
 
+#ifdef CONFIG_YUI_GUEST
+static void thread_stack_free_rcu(struct rcu_head *rh)
+{
+	__free_pages(virt_to_page(rh), THREAD_SIZE_ORDER);
+}
+
+static void thread_dstack_free_rcu(struct rcu_head *rh)
+{
+	__free_pages(virt_to_page(rh), THREAD_SIZE_ORDER);
+}
+
+static void thread_stack_delayed_free(struct task_struct *tsk)
+{
+	struct rcu_head *rh = tsk->stack;
+
+	call_rcu(rh, thread_stack_free_rcu);
+
+	rh = tsk->dstack;
+
+	call_rcu(rh, thread_dstack_free_rcu);
+}
+
+static int alloc_thread_stack_node(struct task_struct *tsk, int node)
+{
+	struct page *page = alloc_pages_node(node, THREADINFO_GFP,
+					     THREAD_SIZE_ORDER);
+
+	if (likely(page)) {
+		tsk->stack = kasan_reset_tag(page_address(page));
+	} else {
+		return -ENOMEM;
+	}
+
+	page = alloc_pages_node(node, THREADINFO_GFP, THREAD_SIZE_ORDER);
+
+	if(likely(page)) {
+		tsk->dstack = kasan_reset_tag(page_address(page));
+		return 0;
+	} else {
+		return -ENOMEM;
+	}
+
+}
+
+static void free_thread_stack(struct task_struct *tsk)
+{
+	thread_stack_delayed_free(tsk);
+	tsk->stack = NULL;
+	tsk->dstack = NULL;
+}
+#else
 static void thread_stack_free_rcu(struct rcu_head *rh)
 {
 	__free_pages(virt_to_page(rh), THREAD_SIZE_ORDER);
@@ -370,6 +421,7 @@ static void free_thread_stack(struct task_struct *tsk)
 	thread_stack_delayed_free(tsk);
 	tsk->stack = NULL;
 }
+#endif
 
 #  endif /* CONFIG_VMAP_STACK */
 # else /* !(THREAD_SIZE >= PAGE_SIZE || defined(CONFIG_VMAP_STACK)) */
