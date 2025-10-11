@@ -172,7 +172,8 @@ static unsigned long pvm_read_cr3(void)
 
 static unsigned long pvm_user_pgd(unsigned long pgd)
 {
-	return boot_cpu_has(X86_FEATURE_PTI) ? pgd | BIT(PTI_PGTABLE_SWITCH_BIT) | BIT(X86_CR3_PTI_PCID_USER_BIT) : pgd;
+	return pgd;
+	// return boot_cpu_has(X86_FEATURE_PTI) ? pgd | BIT(PTI_PGTABLE_SWITCH_BIT) | BIT(X86_CR3_PTI_PCID_USER_BIT) : pgd;
 }
 
 static void pvm_write_cr3(unsigned long val)
@@ -393,7 +394,6 @@ static __always_inline void pvm_handle_sysvec(struct pt_regs *regs, unsigned lon
 	unsigned int index = array_index_nospec(vector - FIRST_SYSTEM_VECTOR,
 						NR_SYSTEM_VECTORS);
 	idtentry_x_t func = (void *)pvm_sysvec_table[index];
-
 	func(regs, vector);
 }
 

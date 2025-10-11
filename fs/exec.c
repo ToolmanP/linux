@@ -1404,6 +1404,9 @@ int begin_new_exec(struct linux_binprm * bprm)
 		bprm->executable = NULL;
 		bprm->execfd = retval;
 	}
+#ifdef CONFIG_YUI_GUEST
+	me->pvcs_tls = 0;
+#endif
 	return 0;
 
 out_unlock:

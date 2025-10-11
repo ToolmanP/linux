@@ -27,7 +27,7 @@
 #define PVCS_switch_flags 136
 #define PVCS_kernel_rflags 144
 #define PVCS_kernel_rsp 152
-#define PVCS_user_gsbase_direct 160
+#define PVCS_user_interrupt_shadow 160
 #define PVCS_user_rsp_direct 168
 #define PVCS_dstack 176
 #define PVCS_yui_addr 184
@@ -94,7 +94,7 @@ struct pvm_vcpu_struct {
 	u64 switch_flags;
 	u64 kernel_rflags;
 	u64 kernel_rsp;
-	u64 user_gsbase_direct;
+	u64 user_interrupt_shadow;
 	u64 user_rsp_direct;
 	u64 dstack;
 	u64 yui_addr;

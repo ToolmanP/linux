@@ -10,17 +10,9 @@
 #include "calling.h"
 
 .extern do_syscall_64_yui
-.extern do_syscall_64
 
 .macro pvm_enable_events
 	orq	$PVM_EVENT_FLAGS_EF, PER_CPU_VAR(pvm_vcpu_struct + PVCS_event_flags)
-	btq	$PVM_EVENT_FLAGS_EP_BIT, PER_CPU_VAR(pvm_vcpu_struct + PVCS_event_flags)
-	jnc	.L_no_event_pending_\@
-	pushq	%rax
-	movq	$PVM_HC_EVENT_WIN, %rax
-	call	pvm_hypercall
-	popq	%rax
-.L_no_event_pending_\@:
 .endm
 
 .macro pvm_disable_events
@@ -30,18 +22,15 @@
 SYM_CODE_START(entry_DIRECTCALL_64_yui)
 	UNWIND_HINT_ENTRY
 	ENDBR
-
-	pushq %r13
-	pushq %r12
+	pushq %rbp
+	movq %rsp, %rbp
+	xorq $SWITCH_FLAGS_MOD_TOGGLE, PER_CPU_VAR(pvm_vcpu_struct + PVCS_switch_flags)
+	movq $0, PER_CPU_VAR(pvm_vcpu_struct + PVCS_user_interrupt_shadow)
 	pvm_enable_events
-	xorq $SWITCH_FLAGS_MOD_TOGGLE, PER_CPU_VAR(pvm_vcpu_struct + PVCS_switch_flags)
 	call do_syscall_64_yui
-
 	pvm_disable_events
+	movq $1, PER_CPU_VAR(pvm_vcpu_struct + PVCS_user_interrupt_shadow)
 	xorq $SWITCH_FLAGS_MOD_TOGGLE, PER_CPU_VAR(pvm_vcpu_struct + PVCS_switch_flags)
-	movq PER_CPU_VAR(pvm_vcpu_struct + PVCS_user_gsbase_direct), %r13
-	wrgsbase %r13
-	popq %r12
-	popq %r13
+	leave
 	RET
 SYM_FUNC_END(entry_DIRECTCALL_64_yui)

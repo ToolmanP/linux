@@ -108,6 +108,10 @@
 
 #include <trace/events/sched.h>
 
+#ifdef CONFIG_YUI_GUEST
+#include <asm/yui_para.h>
+#endif
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/task.h>
 
@@ -1646,7 +1650,9 @@ static int wait_for_vfork_done(struct task_struct *child,
 	cgroup_enter_frozen();
 	killed = wait_for_completion_state(vfork, state);
 	cgroup_leave_frozen(false);
-
+#ifdef CONFIG_YUI_GUEST
+	yui_remap_pvcs_tls(current, smp_processor_id());
+#endif
 	if (killed) {
 		task_lock(child);
 		child->vfork_done = NULL;

@@ -172,7 +172,11 @@ SYM_INNER_LABEL(entry_SYSCALL_64_switcher_safe_stack, SYM_L_GLOBAL)
 	movq	%rcx, %cr3
 
 	/* load smod registers from TSS_extra to sp0 stack or %r11 */
+#ifdef CONFIG_KVM_AZUCAT
+	movq  PVCS_kernel_rsp(%rdi), %rcx
+#else
 	movq	TSS_extra(smod_rsp), %rcx
+#endif
 	movq	%rcx, RSP-ORIG_RAX(%rsp)
 	movq	TSS_extra(smod_entry), %rcx
 	movq	%rcx, RIP-ORIG_RAX(%rsp)
@@ -216,7 +220,7 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 	 * at TSS_extra(retu_rip) - 2 in smod as the return-umod instruction.
 	 */
 	cmpq	%rcx, TSS_extra(retu_rip)
-	jne	.L_switcher_return_to_hypervisor_from_retu
+	jne	.L_switcher_return_to_hypervisor
 
 	/* only handle for the most common cs/ss */
 	movq	TSS_extra(pvcs), %rdi
@@ -225,13 +229,14 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 
 	/* Switcher and the PVM specification requires the smod RSP to be saved */
 	movq	RSP-ORIG_RAX(%rsp), %rcx
-	movq	%rcx, TSS_extra(smod_rsp)
 
 	/* switch smod to umod (switch_flags & cr3) */
 #ifdef	CONFIG_KVM_AZUCAT
+	movq  %rcx, PVCS_kernel_rsp(%rdi) // %rcx should be the kernel mode rsp
 	xorb	$SWITCH_FLAGS_MOD_TOGGLE, PVCS_switch_flags(%rdi)
 #else 
-	xorb    $SWITCH_FLAGS_MOD_TOGGLE, TSS_extra(switch_flags)
+	movq	%rcx, TSS_extra(smod_rsp)
+	xorb  $SWITCH_FLAGS_MOD_TOGGLE, TSS_extra(switch_flags)
 #endif
 	movq	TSS_extra(umod_cr3), %rcx
 	movq	%rcx, %cr3
@@ -283,11 +288,6 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 	/* RCX matches for RIP only before RCX is canonicalized, restore RCX and do IRET. */
 	movq	RIP-RIP(%rsp), %rcx
 	jmp	native_irq_return_iret
-
-.L_switcher_return_to_hypervisor_from_retu:
-	/* Switcher and the PVM specification requires the smod RSP to be saved */
-	movq	RSP-ORIG_RAX(%rsp), %rcx
-	movq	%rcx, TSS_extra(smod_rsp)
 
 .L_switcher_return_to_hypervisor:
 	popq	%rdi					/* saved rdi */

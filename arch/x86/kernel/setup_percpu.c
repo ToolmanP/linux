@@ -22,6 +22,7 @@
 #include <asm/proto.h>
 #include <asm/cpumask.h>
 #include <asm/cpu.h>
+#include <asm/yui_para.h>
 
 #ifdef CONFIG_X86_64
 #define BOOT_PERCPU_OFFSET ((unsigned long)__per_cpu_load)
@@ -203,6 +204,9 @@ void __init setup_per_cpu_areas(void)
 		 */
 		if (!cpu)
 			switch_gdt_and_percpu_base(cpu);
+		else
+			yui_setup_pvcs(cpu);
+
 	}
 
 	/* indicate the early static arrays will soon be gone */
@@ -231,4 +235,6 @@ void __init setup_per_cpu_areas(void)
 	 * this call?
 	 */
 	sync_initial_page_table();
+
+
 }

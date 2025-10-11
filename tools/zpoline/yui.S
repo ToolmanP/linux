@@ -2,7 +2,7 @@
 
 #include "ritsu.h"
 
-.extern yui_direct
+.extern check_kernel_rsp
 
 .text
 .hidden jump_to_yui
@@ -20,32 +20,38 @@ jump_to_yui:
   pushq %r8
   pushq %r9
   pushq 0x10(%rbp) /* arg6 is on the stack.  */
+  pushq %r11
   pushq %r12
   pushq %r13
 
   /* get tls_var pvcs using __tls_get_addr*/
-  leaq     pvcs@TLSGD(%rip), %rdi
-  call    __tls_get_addr@PLT
-  movq     %rax, %r12
+  pushq %r10
+  pushq %r11
+  leaq	pvcs@TLSGD(%rip), %rdi
+  call  __tls_get_addr@PLT
+  movq  %rax, %r12
+  popq %r11
+  popq %r10
 
   /* mask the eflags altogether. This should disable all interrupts. */
-  btrq $X86_EFLAGS_IF_BIT, PVCS_kernel_rflags(%r12)
-  
+  movq $1, PVCS_user_interrupt_shadow(%r12)
+
   /* save user_gsbase */
   rdgsbase %r13
-  movq %r13, PVCS_user_gsbase_direct(%r12)
+  pushq %r13
 
+  pushq PVCS_kernel_rsp(%r12)
   /* save the stack pointer */
   movq %rsp, PVCS_user_rsp_direct(%r12)
-  movq PVCS_dstack(%r12), %rsp
 
+  movq PVCS_kernel_rsp(%r12), %rsp
   /* setup the kernel gsbase */
   movq PVCS_kernel_gsbase(%r12), %r13
   wrgsbase %r13
 
   /* Set up the pt_regs structure on the stack */
   pushq	  $__USER_DS  /* pt_regs->ss */
-  pushq	  PVCS_rsp(%r12) /* pt_regs->sp */
+  pushq	  PVCS_user_rsp_direct(%r12) /* pt_regs->sp */
   pushq	  PVCS_eflags(%r12) /* pt_regs->flags */
   pushq	  $__USER_CS  /* pt_regs->cs */
   pushq	  PVCS_rcx(%r12) /* pt_regs->ip */
@@ -65,9 +71,6 @@ jump_to_yui:
   pushq	  %r13		/* pt_regs->r13 */
   pushq	  %r14		/* pt_regs->r14 */
   pushq	  %r15		/* pt_regs->r15 */
-
-  # leaq     yui_direct@TLSGD(%rip), %rdi
-  # call    __tls_get_addr@PLT
 
   movq %rsp, %rdi
   movslq -1*8(%rbp), %rsi
@@ -90,11 +93,22 @@ jump_to_yui:
   popq %rsi		/* pt_regs->si */
   popq %rdi		/* pt_regs->di */
 
-  movq PVCS_user_rsp_direct(%r12), %rsp
-  orq  $X86_EFLAGS_IF, PVCS_kernel_rflags(%r12)
+  movq 4*8(%rsp), %r13
+  movq %r13, %rsp
+
+.Ljump_to_yui_postlogue:
 
   popq %r13
+  movq %r13, PVCS_kernel_rsp(%r12) /* restore the kernel rsp */
+
+  popq %r13
+  wrgsbase %r13 /* restore the user gsbase from this stack */
+
+  movq $0, PVCS_user_interrupt_shadow(%r12) /* restore the interrupt state, we are safe now */
+  popq %r13
   popq %r12
+  popq %r11
+
   addq $7*8, %rsp /* discard the syscall arguments */
 
   leave

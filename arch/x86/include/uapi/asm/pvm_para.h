@@ -134,7 +134,7 @@ struct pvm_vcpu_struct {
 	u64 switch_flags;
 	u64 kernel_rflags;
 	u64 kernel_rsp;
-	u64 user_gsbase_direct;
+	u64 user_interrupt_shadow;
 	u64 user_rsp_direct;
 	u64 dstack;
 	u64 yui_addr;

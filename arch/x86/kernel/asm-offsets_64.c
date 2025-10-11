@@ -93,7 +93,7 @@ int main(void)
 	ENTRY(switch_flags);
 	ENTRY(kernel_rflags);
 	ENTRY(kernel_rsp);
-	ENTRY(user_gsbase_direct);
+	ENTRY(user_interrupt_shadow);
 	ENTRY(user_rsp_direct);
 	ENTRY(dstack);
 	ENTRY(yui_addr);

@@ -67,6 +67,44 @@ static void pvm_put_vcpu_struct(struct vcpu_pvm *pvm, bool dirty)
 					gpc->gpa >> PAGE_SHIFT);
 }
 
+static phys_addr_t walk_cr3_translate(phys_addr_t cr3, unsigned long vaddr)
+{
+    phys_addr_t pml4_phys = cr3 & ~0xFFFULL;
+
+    u64 *pml4 = __va(pml4_phys);
+    u64 pml4e = pml4[(vaddr >> 39) & 0x1FF];
+    if (!(pml4e & _PAGE_PRESENT))
+        return (phys_addr_t)-1;
+
+    phys_addr_t pdpt_phys = pml4e & PHYSICAL_PAGE_MASK;
+    u64 *pdpt = __va(pdpt_phys);
+    u64 pdpe = pdpt[(vaddr >> 30) & 0x1FF];
+    if (!(pdpe & _PAGE_PRESENT))
+        return (phys_addr_t)-1;
+
+    if (pdpe & _PAGE_PSE)  // 1GB page
+        return (pdpe & PHYSICAL_PAGE_MASK) + (vaddr & ((1ULL<<30)-1));
+
+    // Map PD
+    phys_addr_t pd_phys = pdpe & PHYSICAL_PAGE_MASK;
+    u64 *pd = __va(pd_phys);
+    u64 pde = pd[(vaddr >> 21) & 0x1FF];
+    if (!(pde & _PAGE_PRESENT))
+        return (phys_addr_t)-1;
+
+    if (pde & _PAGE_PSE)  // 2MB page
+        return (pde & PHYSICAL_PAGE_MASK) + (vaddr & ((1ULL<<21)-1));
+
+    // Map PT
+    phys_addr_t pt_phys = pde & PHYSICAL_PAGE_MASK;
+    pte_t *pt = __va(pt_phys);
+    pte_t pte = pt[(vaddr >> 12) & 0x1FF];
+    if (!(pte.pte & _PAGE_PRESENT))
+        return (phys_addr_t)-1;
+
+    return (pte.pte & PHYSICAL_PAGE_MASK) + (vaddr & 0xFFF);
+}
+
 
 #ifdef CONFIG_KVM_AZUCAT
 static u64 __pvm_get_rflags(struct vcpu_pvm *pvm)
@@ -105,6 +143,34 @@ static inline void __pvm_set_rflags(struct vcpu_pvm *pvm, u64 rflags)
 }
 
 #endif
+
+static u64 __pvm_get_supervisor_rsp(struct vcpu_pvm *pvm)
+{
+
+	struct pvm_vcpu_struct *pvcs;
+	u64 rsp;
+	if (!pvm->msr_vcpu_struct) {
+		rsp = pvm->msr_supervisor_rsp;
+	} else {
+		pvcs = pvm->pvcs_gpc.khva;
+		rsp = pvcs->kernel_rsp;
+	}
+	return rsp;
+}
+
+static void __pvm_set_supervisor_rsp(struct vcpu_pvm *pvm, u64 rsp)
+{
+	struct pvm_vcpu_struct *pvcs;
+
+	if (!pvm->msr_vcpu_struct) {
+		pvm->msr_supervisor_rsp = rsp;
+		return;
+	}
+	pvcs = pvm->pvcs_gpc.khva;
+	pvcs->kernel_rsp = rsp;
+
+}
+
 
 static inline bool is_smod(struct vcpu_pvm *pvm)
 {
@@ -403,11 +469,10 @@ static inline void switch_to_smod(struct kvm_vcpu *vcpu)
 	struct vcpu_pvm *pvm = to_pvm(vcpu);
 
 	pvm_switch_flags_toggle_mod(pvm);
-	kvm_mmu_new_pgd(vcpu, pvm->msr_switch_cr3);
-	swap(pvm->msr_switch_cr3, vcpu->arch.cr3);
+	kvm_mmu_new_pgd(vcpu, vcpu->arch.cr3);
 
 	pvm_write_guest_gs_base(pvm, pvm->msr_kernel_gs_base);
-	kvm_rsp_write(vcpu, pvm->msr_supervisor_rsp);
+	kvm_rsp_write(vcpu, __pvm_get_supervisor_rsp(pvm));
 
 	pvm->hw_cs = __USER_CS;
 	pvm->hw_ss = __USER_DS;
@@ -417,11 +482,10 @@ static inline void switch_to_umod(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_pvm *pvm = to_pvm(vcpu);
 
-	pvm->msr_supervisor_rsp = kvm_rsp_read(vcpu);
+	__pvm_set_supervisor_rsp(pvm, kvm_rsp_read(vcpu));
 
 	pvm_switch_flags_toggle_mod(pvm);
-	kvm_mmu_new_pgd(vcpu, pvm->msr_switch_cr3);
-	swap(pvm->msr_switch_cr3, vcpu->arch.cr3);
+	kvm_mmu_new_pgd(vcpu, vcpu->arch.cr3);
 }
 
 /*
@@ -881,25 +945,10 @@ static void pvm_set_host_cr3_for_guest_with_host_pcid(struct vcpu_pvm *pvm)
 static void pvm_set_host_cr3_for_guest_without_host_pcid(struct vcpu_pvm *pvm)
 {
 	u64 root_hpa = pvm->vcpu.arch.mmu->root.hpa;
-	u64 switch_root = 0;
-	u64 prev_root_hpa = pvm->vcpu.arch.mmu->prev_roots[0].hpa;
-
-	if (VALID_PAGE(prev_root_hpa) &&
-	    pvm->vcpu.arch.mmu->prev_roots[0].pgd == pvm->msr_switch_cr3) {
-		switch_root = prev_root_hpa;
-		pvm->switch_flags &= ~SWITCH_FLAGS_NO_DS_CR3;
-	} else {
-		pvm->switch_flags |= SWITCH_FLAGS_NO_DS_CR3;
-	}
 
 	this_cpu_write(cpu_tss_rw.tss_ex.enter_cr3, root_hpa);
-	if (is_smod(pvm)) {
-		this_cpu_write(cpu_tss_rw.tss_ex.smod_cr3, root_hpa);
-		this_cpu_write(cpu_tss_rw.tss_ex.umod_cr3, switch_root);
-	} else {
-		this_cpu_write(cpu_tss_rw.tss_ex.umod_cr3, root_hpa);
-		this_cpu_write(cpu_tss_rw.tss_ex.smod_cr3, switch_root);
-	}
+	this_cpu_write(cpu_tss_rw.tss_ex.smod_cr3, root_hpa);
+	this_cpu_write(cpu_tss_rw.tss_ex.umod_cr3, root_hpa);
 }
 
 static void pvm_set_host_cr3_for_hypervisor(struct vcpu_pvm *pvm)
@@ -1335,6 +1384,8 @@ static int pvm_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 			struct pvm_vcpu_struct *pvcs = pvm_get_vcpu_struct(pvm);
 			pvcs->switch_flags = pvm->switch_flags;
 			pvcs->kernel_rflags = pvm->rflags;
+			pvcs->kernel_rsp = pvm->msr_supervisor_rsp;
+			pvcs->user_interrupt_shadow = 0;
 			pvm_put_vcpu_struct(pvm, true);
 #endif
 		}
@@ -1635,8 +1686,6 @@ static int __do_pvm_event(struct kvm_vcpu *vcpu, bool user, int vector,
 		//supervisor mode and event delivery is masked
 		if (pvcs)
 			pvm_put_vcpu_struct(pvm, false);
-		pr_info("Triple fault in PVM mode, vcpu_struct: 0x%lx, event_flags: 0x%llx, user: %d\n",
-			pvm->msr_vcpu_struct, pvcs ? pvcs->event_flags : 0, user);
 		kvm_make_request(KVM_REQ_TRIPLE_FAULT, vcpu);
 		return 1;
 	}
@@ -1672,8 +1721,10 @@ static int __do_pvm_event(struct kvm_vcpu *vcpu, bool user, int vector,
 
 	if (user)
 		switch_to_smod(vcpu);
-	else
+	else {
 		kvm_rsp_write(vcpu, rsp & ~15UL);
+		__pvm_set_supervisor_rsp(pvm, rsp & ~15UL);
+	}
 
 	if (vector == PVM_SYSCALL_VECTOR)
 		entry = pvm->msr_lstar;
@@ -1747,7 +1798,12 @@ static bool pvm_get_if_flag(struct kvm_vcpu *vcpu)
 
 static u32 pvm_get_interrupt_shadow(struct kvm_vcpu *vcpu)
 {
-	return to_pvm(vcpu)->int_shadow;
+	struct vcpu_pvm *pvm = to_pvm(vcpu);
+	struct pvm_vcpu_struct *pvcs;
+	if (!pvm->msr_vcpu_struct)
+		return pvm->int_shadow;
+	pvcs = pvm->pvcs_gpc.khva;
+	return pvcs->user_interrupt_shadow | pvm->int_shadow;
 }
 
 static void pvm_set_interrupt_shadow(struct kvm_vcpu *vcpu, int mask)
@@ -1847,10 +1903,10 @@ static int handle_synthetic_instruction_return(struct kvm_vcpu *vcpu, bool user)
 	struct pvm_vcpu_struct *pvcs;
 
 	/* switch to user mode before rsp changed. */
+	pvcs = pvm_get_vcpu_struct(pvm);
 	if (user)
 		switch_to_umod(vcpu);
 
-	pvcs = pvm_get_vcpu_struct(pvm);
 	if (!pvcs) {
 		kvm_make_request(KVM_REQ_TRIPLE_FAULT, vcpu);
 		return 1;
@@ -1860,7 +1916,6 @@ static int handle_synthetic_instruction_return(struct kvm_vcpu *vcpu, bool user)
 	kvm_rsp_write(vcpu, pvcs->rsp);
 	kvm_rcx_write(vcpu, pvcs->rcx);
 	kvm_r11_write(vcpu, pvcs->r11);
-
 #ifdef CONFIG_KVM_AZUCAT
 	pvcs->kernel_rflags = pvcs->eflags;
 #else
@@ -1880,8 +1935,12 @@ static int handle_synthetic_instruction_return(struct kvm_vcpu *vcpu, bool user)
 
 	pvm_set_nmi_mask(vcpu, false);
 	kvm_make_request(KVM_REQ_EVENT, vcpu);
-	if (!user)
+
+	if (!user){
 		pvcs->event_flags |= PVM_EVENT_FLAGS_EF;
+		__pvm_set_supervisor_rsp(pvm, pvcs->rsp);
+	}
+	
 	pvcs->event_flags &= ~PVM_EVENT_FLAGS_EP;
 	pvm->switch_flags &= ~SWITCH_FLAGS_NMI_WIN;
 	if (pvm_get_if_flag(vcpu)) {
@@ -2167,21 +2226,15 @@ static int handle_kvm_hypercall(struct kvm_vcpu *vcpu)
 }
 
 
-static int handle_kvm_translate_gva(struct kvm_vcpu *vcpu, unsigned long gva){
-	gpa_t gpa;
-	gpa = kvm_mmu_gva_to_gpa_read(vcpu, gva, NULL);
-	kvm_rax_write(vcpu, gpa);
-	return 1;
-}
-
 static int handle_exit_syscall(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_pvm *pvm = to_pvm(vcpu);
 	unsigned long rip = kvm_rip_read(vcpu);
 	unsigned long a0, a1, a2;
 
-	if (!is_smod(pvm))
+	if (!is_smod(pvm)){
 		return __do_pvm_event(vcpu, true, PVM_SYSCALL_VECTOR, false, 0);
+	}
 
 	if (rip == pvm->msr_retu_rip_plus2)
 		return handle_synthetic_instruction_return(vcpu, true);
@@ -2214,8 +2267,6 @@ static int handle_exit_syscall(struct kvm_vcpu *vcpu)
 		return handle_hc_wrmsr(vcpu, a0, a1);
 	case PVM_HC_LOAD_TLS:
 		return handle_hc_load_tls(vcpu, a0, a1, a2);
-	case PVM_HC_TRANS_GVA:
-		return handle_kvm_translate_gva(vcpu, a0);
 	default:
 		return handle_kvm_hypercall(vcpu);
 	}
@@ -2676,17 +2727,17 @@ static noinstr void pvm_vcpu_run_noinstr(struct kvm_vcpu *vcpu)
 	tss_ex->retu_rip = pvm->msr_retu_rip_plus2;
 	tss_ex->smod_entry = pvm->msr_lstar;
 	tss_ex->smod_gsbase = pvm->msr_kernel_gs_base;
-	tss_ex->smod_rsp = pvm->msr_supervisor_rsp;
+
 #ifdef CONFIG_KVM_AZUCAT
 	if (tss_ex->pvcs) {
 		tss_ex->pvcs->switch_flags = pvm->switch_flags;
 		tss_ex->pvcs->kernel_gsbase = pvm->msr_kernel_gs_base;
-		tss_ex->pvcs->kernel_rsp = pvm->msr_supervisor_rsp;
 		mark_page_dirty_in_slot(vcpu->kvm, pvm->pvcs_gpc.memslot,
 				pvm->pvcs_gpc.gpa >> PAGE_SHIFT);
 
 	} else {
 		tss_ex->switch_flags = pvm->switch_flags;
+		tss_ex->smod_rsp = __pvm_get_supervisor_rsp(pvm);
 	}
 #else
 	tss_ex->switch_flags = pvm->switch_flags;
@@ -2695,11 +2746,11 @@ static noinstr void pvm_vcpu_run_noinstr(struct kvm_vcpu *vcpu)
 	if (unlikely(pvm->guest_dr7 & DR7_BP_EN_MASK))
 		set_debugreg(pvm_eff_dr7(vcpu), 7);
 
-	// Call into switcher and enter guest.
 	ret_regs = switcher_enter_guest();
 
 	// Get the resulted mode and PVM MSRs which might be changed
 	// when direct switching.
+	//
 #ifdef CONFIG_KVM_AZUCAT
 	if (tss_ex->pvcs)
 		pvm->switch_flags = tss_ex->pvcs->switch_flags;
@@ -2708,10 +2759,13 @@ static noinstr void pvm_vcpu_run_noinstr(struct kvm_vcpu *vcpu)
 #else
 	pvm->switch_flags = tss_ex->switch_flags;
 #endif
-	pvm->msr_supervisor_rsp = tss_ex->smod_rsp;
 
 	// Get the guest registers from the host sp0 stack.
 	save_regs(vcpu, ret_regs);
+
+	if(is_smod(pvm))
+		__pvm_set_supervisor_rsp(pvm, kvm_rsp_read(vcpu));
+
 	pvm->exit_vector = (ret_regs->orig_ax >> 32);
 	pvm->exit_error_code = (u32)ret_regs->orig_ax;
 
@@ -2789,7 +2843,6 @@ static inline void pvm_load_host_xsave_state(struct kvm_vcpu *vcpu)
 static fastpath_t pvm_vcpu_run(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_pvm *pvm = to_pvm(vcpu);
-	bool is_smod_befor_run = is_smod(pvm);
 
 	/*
 	 * Don't enter guest if guest state is invalid, let the exit handler
@@ -2821,10 +2874,6 @@ static fastpath_t pvm_vcpu_run(struct kvm_vcpu *vcpu)
 
 	pvm_vcpu_run_noinstr(vcpu);
 
-	if (is_smod_befor_run != is_smod(pvm)) {
-		swap(pvm->vcpu.arch.mmu->root, pvm->vcpu.arch.mmu->prev_roots[0]);
-		swap(pvm->msr_switch_cr3, pvm->vcpu.arch.cr3);
-	}
 
 	/* MSR_IA32_DEBUGCTLMSR is zeroed before vmenter. Restore it if needed */
 	if (pvm->host_debugctlmsr)

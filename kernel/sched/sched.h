@@ -79,6 +79,10 @@
 # include <asm/paravirt_api_clock.h>
 #endif
 
+#ifdef CONFIG_YUI_GUEST
+#include <asm/yui_para.h>
+#endif
+
 #include "cpupri.h"
 #include "cpudeadline.h"
 
@@ -2029,6 +2033,11 @@ static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
 	smp_wmb();
 	WRITE_ONCE(task_thread_info(p)->cpu, cpu);
 	p->wake_cpu = cpu;
+#ifdef CONFIG_YUI_GUEST
+		if(p->pvcs_tls)
+			/* we need to remap the cpu per variable on to this address with read-write access */
+			yui_remap_pvcs_tls(p, cpu);
+#endif
 #endif
 }
 
