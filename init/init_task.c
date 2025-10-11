@@ -212,10 +212,6 @@ struct task_struct init_task
 #endif
 #ifdef CONFIG_YUI_GUEST
 	.pvcs_tls = 0,
-#ifdef CONFIG_VMAP_STACK
-	.dstack_vm_area = NULL,
-#endif
-	.dstack = NULL,
 #endif
 };
 EXPORT_SYMBOL(init_task);
