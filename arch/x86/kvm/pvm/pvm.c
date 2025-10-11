@@ -470,6 +470,7 @@ static inline void switch_to_smod(struct kvm_vcpu *vcpu)
 
 	pvm_switch_flags_toggle_mod(pvm);
 	kvm_mmu_new_pgd(vcpu, vcpu->arch.cr3);
+  swap(pvm->msr_switch_cr3, vcpu->arch.cr3);
 
 	pvm_write_guest_gs_base(pvm, pvm->msr_kernel_gs_base);
 	kvm_rsp_write(vcpu, __pvm_get_supervisor_rsp(pvm));
@@ -486,6 +487,7 @@ static inline void switch_to_umod(struct kvm_vcpu *vcpu)
 
 	pvm_switch_flags_toggle_mod(pvm);
 	kvm_mmu_new_pgd(vcpu, vcpu->arch.cr3);
+  swap(pvm->msr_switch_cr3, vcpu->arch.cr3);
 }
 
 /*
@@ -945,10 +947,25 @@ static void pvm_set_host_cr3_for_guest_with_host_pcid(struct vcpu_pvm *pvm)
 static void pvm_set_host_cr3_for_guest_without_host_pcid(struct vcpu_pvm *pvm)
 {
 	u64 root_hpa = pvm->vcpu.arch.mmu->root.hpa;
+	u64 switch_root = 0;
+	u64 prev_root_hpa = pvm->vcpu.arch.mmu->prev_roots[0].hpa;
+
+	if (VALID_PAGE(prev_root_hpa) &&
+	    pvm->vcpu.arch.mmu->prev_roots[0].pgd == pvm->msr_switch_cr3) {
+		switch_root = prev_root_hpa;
+		pvm->switch_flags &= ~SWITCH_FLAGS_NO_DS_CR3;
+	} else {
+		pvm->switch_flags |= SWITCH_FLAGS_NO_DS_CR3;
+	}
 
 	this_cpu_write(cpu_tss_rw.tss_ex.enter_cr3, root_hpa);
-	this_cpu_write(cpu_tss_rw.tss_ex.smod_cr3, root_hpa);
-	this_cpu_write(cpu_tss_rw.tss_ex.umod_cr3, root_hpa);
+	if (is_smod(pvm)) {
+		this_cpu_write(cpu_tss_rw.tss_ex.smod_cr3, root_hpa);
+		this_cpu_write(cpu_tss_rw.tss_ex.umod_cr3, switch_root);
+	} else {
+		this_cpu_write(cpu_tss_rw.tss_ex.umod_cr3, root_hpa);
+		this_cpu_write(cpu_tss_rw.tss_ex.smod_cr3, switch_root);
+	}
 }
 
 static void pvm_set_host_cr3_for_hypervisor(struct vcpu_pvm *pvm)
@@ -2843,6 +2860,7 @@ static inline void pvm_load_host_xsave_state(struct kvm_vcpu *vcpu)
 static fastpath_t pvm_vcpu_run(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_pvm *pvm = to_pvm(vcpu);
+  bool is_smod_befor_run = is_smod(pvm);
 
 	/*
 	 * Don't enter guest if guest state is invalid, let the exit handler
@@ -2873,6 +2891,11 @@ static fastpath_t pvm_vcpu_run(struct kvm_vcpu *vcpu)
 		update_debugctlmsr(0);
 
 	pvm_vcpu_run_noinstr(vcpu);
+
+  if (is_smod_befor_run != is_smod(pvm)) {
+		swap(pvm->vcpu.arch.mmu->root, pvm->vcpu.arch.mmu->prev_roots[0]);
+		swap(pvm->msr_switch_cr3, pvm->vcpu.arch.cr3);
+	}
 
 
 	/* MSR_IA32_DEBUGCTLMSR is zeroed before vmenter. Restore it if needed */
