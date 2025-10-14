@@ -149,6 +149,9 @@ struct vcpu_pvm {
 	u64 l5_range_start;
 	u64 l5_range_end;
 
+  u32 smod_pkru;
+  u32 umod_pkru;
+
 	struct kvm_segment segments[NR_VCPU_SREG];
 	struct desc_ptr idt_ptr;
 	struct desc_ptr gdt_ptr;

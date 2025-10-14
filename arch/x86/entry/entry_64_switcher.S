@@ -168,6 +168,19 @@ SYM_INNER_LABEL(entry_SYSCALL_64_switcher_safe_stack, SYM_L_GLOBAL)
 #else
 	xorb	$SWITCH_FLAGS_MOD_TOGGLE, TSS_extra(switch_flags)
 #endif
+
+  pushq %rax
+  pushq %rcx
+  pushq %rdx
+  xorq %rax, %rax
+  xorq %rcx, %rcx
+  xorq %rdx, %rdx
+  movl $0, %eax
+  wrpkru
+  popq  %rax
+  popq  %rcx
+  popq  %rdx
+
 	movq	TSS_extra(smod_cr3), %rcx
 	movq	%rcx, %cr3
 
@@ -238,6 +251,19 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 	movq	%rcx, TSS_extra(smod_rsp)
 	xorb  $SWITCH_FLAGS_MOD_TOGGLE, TSS_extra(switch_flags)
 #endif
+
+  pushq %rax
+  pushq %rcx
+  pushq %rdx
+  xorq %rax, %rax
+  xorq %rcx, %rcx
+  xorq %rdx, %rdx
+  movl $(3<<2), %eax
+  wrpkru
+  popq  %rax
+  popq  %rcx
+  popq  %rdx
+
 	movq	TSS_extra(umod_cr3), %rcx
 	movq	%rcx, %cr3
 
@@ -248,6 +274,7 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 	movq	PVCS_user_gsbase(%rdi), %rcx
 	canonical_rcx
 	wrgsbase %rcx
+
 
 	/* load sp, flags, ip to sp0 stack and cx, r11, rdi to registers */
 	movq	PVCS_rsp(%rdi), %rcx

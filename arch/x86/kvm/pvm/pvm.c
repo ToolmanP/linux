@@ -2841,9 +2841,12 @@ static inline void pvm_load_guest_xsave_state(struct kvm_vcpu *vcpu)
 {
 	kvm_load_guest_xsave_state(vcpu);
 
+  struct vcpu_pvm *pvm = to_pvm(vcpu);
 	if (cpu_feature_enabled(X86_FEATURE_PKU)) {
-		if (vcpu->arch.host_pkru)
-			write_pkru(0);
+      if(!pvm->msr_vcpu_struct)
+			  write_pkru(0);
+      else
+        write_pkru(is_smod(pvm) ? 3 << 2 : 0);
 	}
 }
 

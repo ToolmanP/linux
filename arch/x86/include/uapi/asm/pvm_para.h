@@ -138,6 +138,8 @@ struct pvm_vcpu_struct {
 	u64 user_rsp_direct;
 	u64 dstack;
 	u64 yui_addr;
+  u32 kernel_pkru;
+  u32 user_pkru;
 } __aligned(PAGE_SIZE);
 #else
 };

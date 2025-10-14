@@ -97,6 +97,8 @@ int main(void)
 	ENTRY(user_rsp_direct);
 	ENTRY(dstack);
 	ENTRY(yui_addr);
+  ENTRY(kernel_pkru);
+  ENTRY(user_pkru);
 #endif
 	BLANK();
 #undef ENTRY

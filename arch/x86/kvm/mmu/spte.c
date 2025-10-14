@@ -18,6 +18,7 @@
 #include <asm/e820/api.h>
 #include <asm/memtype.h>
 #include <asm/vmx.h>
+#include <asm/mman.h>
 
 bool __read_mostly enable_mmio_caching = true;
 static bool __ro_after_init allow_mmio_caching;
@@ -230,6 +231,10 @@ bool make_spte(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
 			spte &= ~(PT_WRITABLE_MASK | shadow_mmu_writable_mask);
 		}
 	}
+
+#ifdef CONFIG_KVM_AZUCAT
+  spte |= arch_calc_vm_prot_bits(0, (u64)__is_canonical_address(gfn << PAGE_SHIFT, 48));
+#endif
 
 	if (pte_access & ACC_WRITE_MASK)
 		spte |= spte_shadow_dirty_mask(spte);
