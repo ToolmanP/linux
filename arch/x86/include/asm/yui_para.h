@@ -16,8 +16,6 @@ void entry_DIRECTCALL_64_yui(void);
 
 #else
 static inline void yui_setup_pvcs(int cpu) { }
-static inline void yui_switch_dstack(struct task_struct *tsk){
-}
 #endif
 
 #endif

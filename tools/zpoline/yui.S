@@ -33,16 +33,16 @@ jump_to_yui:
   popq %r11
   popq %r10
 
-  /* mask the eflags altogether. This should disable all interrupts. */
-  movq $1, PVCS_user_interrupt_shadow(%r12)
+  /* mask the interrupt altogether. This should disable all interrupts except for nmi. */
+  movq $1, PVCS_intr_mask(%r12)
 
   /* save user_gsbase */
   rdgsbase %r13
   pushq %r13
 
   pushq PVCS_kernel_rsp(%r12)
-  /* save the stack pointer */
-  movq %rsp, PVCS_user_rsp_direct(%r12)
+  /* save the stack pointer into scratch rsp */
+  movq %rsp, PVCS_user_rsp(%r12)
 
   movq PVCS_kernel_rsp(%r12), %rsp
   /* setup the kernel gsbase */
@@ -51,7 +51,7 @@ jump_to_yui:
 
   /* Set up the pt_regs structure on the stack */
   pushq	  $__USER_DS  /* pt_regs->ss */
-  pushq	  PVCS_user_rsp_direct(%r12) /* pt_regs->sp */
+  pushq	  PVCS_user_rsp(%r12) /* pt_regs->sp */
   pushq	  PVCS_eflags(%r12) /* pt_regs->flags */
   pushq	  $__USER_CS  /* pt_regs->cs */
   pushq	  PVCS_rcx(%r12) /* pt_regs->ip */
@@ -75,7 +75,7 @@ jump_to_yui:
   movq %rsp, %rdi
   movslq -1*8(%rbp), %rsi
   /* let's go! */
-  call *PVCS_yui_addr(%r12)
+  call *PVCS_yui_entry(%r12)
 
   popq %r15		/* pt_regs->r15 */
   popq %r14		/* pt_regs->r14 */
@@ -104,7 +104,7 @@ jump_to_yui:
   popq %r13
   wrgsbase %r13 /* restore the user gsbase from this stack */
 
-  movq $0, PVCS_user_interrupt_shadow(%r12) /* restore the interrupt state, we are safe now */
+  movq $0, PVCS_intr_mask(%r12) /* restore the interrupt state, we are safe now */
   popq %r13
   popq %r12
   popq %r11

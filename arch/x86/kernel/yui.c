@@ -18,9 +18,8 @@ void yui_setup_pvcs(int cpu)
 	unsigned long kernel_gsbase;
 	kernel_gsbase = cpu_kernelmode_gs_base(cpu);
 	per_cpu_ptr(&pvm_vcpu_struct, cpu)->kernel_gsbase = kernel_gsbase;
-	per_cpu_ptr(&pvm_vcpu_struct, cpu)->yui_addr =
+	per_cpu_ptr(&pvm_vcpu_struct, cpu)->yui_entry =
 		(unsigned long)entry_DIRECTCALL_64_yui;
-	per_cpu_ptr(&pvm_vcpu_struct, cpu)->reserved1 = 1;
 }
 
 int yui_remap_pvcs_tls(struct task_struct *p, int dest_cpu)

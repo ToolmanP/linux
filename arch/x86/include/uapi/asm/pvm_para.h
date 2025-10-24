@@ -109,7 +109,7 @@ struct pvm_vcpu_struct {
 	 * This flag is only used in supervisor mode, with only bit 8 and
 	 * bit 9 being valid. The other bits are reserved.
 	 */
-	u64 event_flags;
+	u64 event_flags; /* The stuff that only works in kernel mode. When doing VM-exit in VM-kernel mode, the hypervisor updates vm_rflags based on it. */
 	u32 event_errcode;
 	u32 event_vector;
 	u64 cr2;
@@ -131,13 +131,12 @@ struct pvm_vcpu_struct {
 	u64 r11;
 #if defined(CONFIG_YUI_GUEST) || defined(CONFIG_KVM_AZUCAT)
 	u64 kernel_gsbase;
-	u64 switch_flags;
-	u64 kernel_rflags;
+	u64 switch_flags; // for switcher to identify whether to be back to host?
+	u64 vm_rflags; // This is the one that really decides the event handling.
 	u64 kernel_rsp;
-	u64 user_interrupt_shadow;
-	u64 user_rsp_direct;
-	u64 dstack;
-	u64 yui_addr;
+	u64 user_rsp;
+	u64 intr_mask;
+	u64 yui_entry;
 } __aligned(PAGE_SIZE);
 #else
 };

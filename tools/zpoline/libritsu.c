@@ -38,35 +38,13 @@ static inline int can_direct_nya(long a1, long a2)
 	}
 }
 
-void __hidden check_kernel_rsp(u64 rsp)
-{
-	if (rsp < 0xffff000000000000) {
-		while (1)
-			;
-	}
-}
-
-void __hidden check_user_rsp(u64 rsp)
-{
-	if (rsp > 0xffff000000000000) {
-		while (1)
-			;
-	}
-}
-
-void __hidden check_pvcs(u64 pvcs_res)
-{
-	while (pvcs_res != (unsigned long)&pvcs)
-		;
-}
-
 static long tsumugi(long a1, long a2, long a3, long a4, long a5, long a6,
 		    long a7)
 {
 	long ret;
 
 	if (likely(can_direct_nya(a1, a2))) {
-		if (unlikely(!pvcs.reserved1)) 
+		if (unlikely(!pvcs.yui_entry)) 
 			call_yui(__SYS_PVCS_SET_TLS, (unsigned long)(&pvcs), 0,
 			0, 0, 0, 0);
 		ret = jump_to_yui(a1, a2, a3, a4, a5, a6, a7);

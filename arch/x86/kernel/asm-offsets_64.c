@@ -91,12 +91,11 @@ int main(void)
 #if defined(CONFIG_YUI_GUEST) || defined(CONFIG_KVM_AZUCAT)
 	ENTRY(kernel_gsbase);
 	ENTRY(switch_flags);
-	ENTRY(kernel_rflags);
+	ENTRY(vm_rflags);
 	ENTRY(kernel_rsp);
-	ENTRY(user_interrupt_shadow);
-	ENTRY(user_rsp_direct);
-	ENTRY(dstack);
-	ENTRY(yui_addr);
+	ENTRY(user_rsp);
+	ENTRY(intr_mask);
+	ENTRY(yui_entry);
 #endif
 	BLANK();
 #undef ENTRY

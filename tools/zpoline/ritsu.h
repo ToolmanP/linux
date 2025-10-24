@@ -25,12 +25,11 @@
 #define PVCS_r11 120
 #define PVCS_kernel_gsbase 128
 #define PVCS_switch_flags 136
-#define PVCS_kernel_rflags 144
+#define PVCS_vm_rflags 144
 #define PVCS_kernel_rsp 152
-#define PVCS_user_interrupt_shadow 160
-#define PVCS_user_rsp_direct 168
-#define PVCS_dstack 176
-#define PVCS_yui_addr 184
+#define PVCS_user_rsp 160
+#define PVCS_intr_mask 168
+#define PVCS_yui_entry 176
 
 #define GDT_ENTRY_DEFAULT_USER_DS 5
 #define GDT_ENTRY_DEFAULT_USER_CS 6
@@ -43,7 +42,7 @@
 	 X86_EFLAGS_ZF | X86_EFLAGS_AF | X86_EFLAGS_PF | X86_EFLAGS_CF |    \
 	 X86_EFLAGS_ID | X86_EFLAGS_NT)
 
-#define DIRECTCALL_ENTER_MASK                                             \
+#define DIRECTCALL_ENTER_MASK                                              \
 	(X86_EFLAGS_CF | X86_EFLAGS_PF | X86_EFLAGS_AF | X86_EFLAGS_ZF |   \
 	 X86_EFLAGS_SF | X86_EFLAGS_TF | X86_EFLAGS_IF | X86_EFLAGS_DF |   \
 	 X86_EFLAGS_OF | X86_EFLAGS_IOPL | X86_EFLAGS_NT | X86_EFLAGS_RF | \
@@ -92,12 +91,11 @@ struct pvm_vcpu_struct {
 	u64 r11;
 	u64 kernel_gsbase;
 	u64 switch_flags;
-	u64 kernel_rflags;
+	u64 vm_rflags;
 	u64 kernel_rsp;
-	u64 user_interrupt_shadow;
-	u64 user_rsp_direct;
-	u64 dstack;
-	u64 yui_addr;
+	u64 user_rsp;
+	u64 intr_mask;
+	u64 yui_entry;
 } __attribute__((aligned(4096)));
 
 #define PVM_EVENT_FLAGS_EF_BIT 0

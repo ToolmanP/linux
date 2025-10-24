@@ -67,44 +67,6 @@ static void pvm_put_vcpu_struct(struct vcpu_pvm *pvm, bool dirty)
 					gpc->gpa >> PAGE_SHIFT);
 }
 
-static phys_addr_t walk_cr3_translate(phys_addr_t cr3, unsigned long vaddr)
-{
-    phys_addr_t pml4_phys = cr3 & ~0xFFFULL;
-
-    u64 *pml4 = __va(pml4_phys);
-    u64 pml4e = pml4[(vaddr >> 39) & 0x1FF];
-    if (!(pml4e & _PAGE_PRESENT))
-        return (phys_addr_t)-1;
-
-    phys_addr_t pdpt_phys = pml4e & PHYSICAL_PAGE_MASK;
-    u64 *pdpt = __va(pdpt_phys);
-    u64 pdpe = pdpt[(vaddr >> 30) & 0x1FF];
-    if (!(pdpe & _PAGE_PRESENT))
-        return (phys_addr_t)-1;
-
-    if (pdpe & _PAGE_PSE)  // 1GB page
-        return (pdpe & PHYSICAL_PAGE_MASK) + (vaddr & ((1ULL<<30)-1));
-
-    // Map PD
-    phys_addr_t pd_phys = pdpe & PHYSICAL_PAGE_MASK;
-    u64 *pd = __va(pd_phys);
-    u64 pde = pd[(vaddr >> 21) & 0x1FF];
-    if (!(pde & _PAGE_PRESENT))
-        return (phys_addr_t)-1;
-
-    if (pde & _PAGE_PSE)  // 2MB page
-        return (pde & PHYSICAL_PAGE_MASK) + (vaddr & ((1ULL<<21)-1));
-
-    // Map PT
-    phys_addr_t pt_phys = pde & PHYSICAL_PAGE_MASK;
-    pte_t *pt = __va(pt_phys);
-    pte_t pte = pt[(vaddr >> 12) & 0x1FF];
-    if (!(pte.pte & _PAGE_PRESENT))
-        return (phys_addr_t)-1;
-
-    return (pte.pte & PHYSICAL_PAGE_MASK) + (vaddr & 0xFFF);
-}
-
 
 #ifdef CONFIG_KVM_AZUCAT
 static u64 __pvm_get_rflags(struct vcpu_pvm *pvm)
@@ -115,7 +77,7 @@ static u64 __pvm_get_rflags(struct vcpu_pvm *pvm)
 		return pvm->rflags;
 	
 	pvcs = pvm->pvcs_gpc.khva;
-	return pvcs->kernel_rflags;
+	return pvcs->vm_rflags;
 }
 
 static void __pvm_set_rflags(struct vcpu_pvm *pvm, u64 rflags)
@@ -128,7 +90,7 @@ static void __pvm_set_rflags(struct vcpu_pvm *pvm, u64 rflags)
 	}
 
 	pvcs = pvm->pvcs_gpc.khva;
-	pvcs->kernel_rflags = rflags;
+	pvcs->vm_rflags = rflags;
 }
 #else
 
@@ -1400,9 +1362,9 @@ static int pvm_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 #ifdef CONFIG_KVM_AZUCAT
 			struct pvm_vcpu_struct *pvcs = pvm_get_vcpu_struct(pvm);
 			pvcs->switch_flags = pvm->switch_flags;
-			pvcs->kernel_rflags = pvm->rflags;
+			pvcs->vm_rflags = pvm->rflags;
 			pvcs->kernel_rsp = pvm->msr_supervisor_rsp;
-			pvcs->user_interrupt_shadow = 0;
+			pvcs->intr_mask= 0;
 			pvm_put_vcpu_struct(pvm, true);
 #endif
 		}
@@ -1820,7 +1782,7 @@ static u32 pvm_get_interrupt_shadow(struct kvm_vcpu *vcpu)
 	if (!pvm->msr_vcpu_struct)
 		return pvm->int_shadow;
 	pvcs = pvm->pvcs_gpc.khva;
-	return pvcs->user_interrupt_shadow | pvm->int_shadow;
+	return pvcs->intr_mask | pvm->int_shadow;
 }
 
 static void pvm_set_interrupt_shadow(struct kvm_vcpu *vcpu, int mask)
@@ -1934,7 +1896,7 @@ static int handle_synthetic_instruction_return(struct kvm_vcpu *vcpu, bool user)
 	kvm_rcx_write(vcpu, pvcs->rcx);
 	kvm_r11_write(vcpu, pvcs->r11);
 #ifdef CONFIG_KVM_AZUCAT
-	pvcs->kernel_rflags = pvcs->eflags;
+	pvcs->vm_rflags = pvcs->eflags;
 #else
 	pvm->rflags = pvcs->eflags;
 #endif
@@ -1944,7 +1906,7 @@ static int handle_synthetic_instruction_return(struct kvm_vcpu *vcpu, bool user)
 		pvm->hw_ss = pvcs->user_ss | USER_RPL;
 		pvm_write_guest_gs_base(pvm, pvcs->user_gsbase);
 #ifdef CONFIG_KVM_AZUCAT
-		pvcs->kernel_rflags |= X86_EFLAGS_IF;
+		pvcs->vm_rflags |= X86_EFLAGS_IF;
 #else
 		pvm->rflags |= X86_EFLAGS_IF;
 #endif
@@ -2919,7 +2881,7 @@ static fastpath_t pvm_vcpu_run(struct kvm_vcpu *vcpu)
 			pvm_set_nmi_mask(vcpu, !(pvcs->event_flags & PVM_EVENT_FLAGS_EF));
 			rflags |= X86_EFLAGS_IF & pvcs->event_flags;
 #ifdef CONFIG_KVM_AZUCAT
-			pvcs->kernel_rflags = rflags;
+			pvcs->vm_rflags = rflags;
 #endif
 		}
 		pvm->rflags = rflags;
