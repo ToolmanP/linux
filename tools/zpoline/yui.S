@@ -34,7 +34,7 @@ jump_to_yui:
   popq %r10
 
   /* mask the interrupt altogether. This should disable all interrupts except for nmi. */
-  movq $1, PVCS_intr_mask(%r12)
+  orq $INTR_MASK_IF, PVCS_intr_mask(%r12)
 
   /* save user_gsbase */
   rdgsbase %r13
@@ -104,7 +104,7 @@ jump_to_yui:
   popq %r13
   wrgsbase %r13 /* restore the user gsbase from this stack */
 
-  movq $0, PVCS_intr_mask(%r12) /* restore the interrupt state, we are safe now */
+  andq $(~INTR_MASK_IF), PVCS_intr_mask(%r12) /* restore the interrupt state, we are safe now */
   popq %r13
   popq %r12
   popq %r11

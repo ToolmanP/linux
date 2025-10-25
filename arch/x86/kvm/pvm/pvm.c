@@ -67,6 +67,47 @@ static void pvm_put_vcpu_struct(struct vcpu_pvm *pvm, bool dirty)
 					gpc->gpa >> PAGE_SHIFT);
 }
 
+#ifdef CONFIG_KVM_AZUCAT
+static bool pvm_get_nmi_mask(struct kvm_vcpu *vcpu)
+{
+  struct vcpu_pvm *pvm = to_pvm(vcpu);
+  struct pvm_vcpu_struct *pvcs;
+  bool masked;
+  if(pvm->msr_vcpu_struct) {
+    pvcs = pvm->pvcs_gpc.khva;
+    masked = pvcs->intr_mask & AZUCAT_INTR_MASK_NMI;
+    return masked;
+  } else {
+	  return to_pvm(vcpu)->nmi_mask;
+  }
+}
+
+static void pvm_set_nmi_mask(struct kvm_vcpu *vcpu, bool masked)
+{
+  struct vcpu_pvm *pvm = to_pvm(vcpu);
+  struct pvm_vcpu_struct *pvcs;
+  if(pvm->msr_vcpu_struct){
+    pvcs = pvm->pvcs_gpc.khva;
+    pvcs->intr_mask &= (~AZUCAT_INTR_MASK_NMI);
+    pvcs->intr_mask |= (masked << AZUCAT_INTR_MASK_NMI_BIT);
+  } else {
+	  to_pvm(vcpu)->nmi_mask = masked;
+  }
+}
+
+#else
+static bool pvm_get_nmi_mask(struct kvm_vcpu *vcpu)
+{
+	return to_pvm(vcpu)->nmi_mask;
+}
+
+static void pvm_set_nmi_mask(struct kvm_vcpu *vcpu, bool masked)
+{
+	to_pvm(vcpu)->nmi_mask = masked;
+}
+
+#endif
+
 
 #ifdef CONFIG_KVM_AZUCAT
 static u64 __pvm_get_rflags(struct vcpu_pvm *pvm)
@@ -1363,8 +1404,8 @@ static int pvm_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 			struct pvm_vcpu_struct *pvcs = pvm_get_vcpu_struct(pvm);
 			pvcs->switch_flags = pvm->switch_flags;
 			pvcs->vm_rflags = pvm->rflags;
+      pvcs->intr_mask = pvm->nmi_mask << AZUCAT_INTR_MASK_NMI_BIT;
 			pvcs->kernel_rsp = pvm->msr_supervisor_rsp;
-			pvcs->intr_mask= 0;
 			pvm_put_vcpu_struct(pvm, true);
 #endif
 		}
@@ -1691,7 +1732,8 @@ static int __do_pvm_event(struct kvm_vcpu *vcpu, bool user, int vector,
 	if (vector == PF_VECTOR)
 		pvcs->cr2 = vcpu->arch.cr2;
 
-	pvm->nmi_mask = true;
+  pvm_set_nmi_mask(vcpu, true);
+
 	pvcs->event_flags &= ~(PVM_EVENT_FLAGS_EF | PVM_EVENT_FLAGS_EP | PVM_EVENT_FLAGS_IF);
 	if (vector >= 32)
 		pvcs->event_flags &= ~PVM_EVENT_FLAGS_IP;
@@ -1782,7 +1824,7 @@ static u32 pvm_get_interrupt_shadow(struct kvm_vcpu *vcpu)
 	if (!pvm->msr_vcpu_struct)
 		return pvm->int_shadow;
 	pvcs = pvm->pvcs_gpc.khva;
-	return pvcs->intr_mask | pvm->int_shadow;
+	return (pvcs->intr_mask & AZUCAT_INTR_MASK_IF) | pvm->int_shadow;
 }
 
 static void pvm_set_interrupt_shadow(struct kvm_vcpu *vcpu, int mask)
@@ -1805,15 +1847,6 @@ static int pvm_interrupt_allowed(struct kvm_vcpu *vcpu, bool for_injection)
 	return pvm_get_if_flag(vcpu) && !pvm_get_interrupt_shadow(vcpu);
 }
 
-static bool pvm_get_nmi_mask(struct kvm_vcpu *vcpu)
-{
-	return to_pvm(vcpu)->nmi_mask;
-}
-
-static void pvm_set_nmi_mask(struct kvm_vcpu *vcpu, bool masked)
-{
-	to_pvm(vcpu)->nmi_mask = masked;
-}
 
 static void enable_nmi_window(struct kvm_vcpu *vcpu)
 {
@@ -1823,7 +1856,7 @@ static void enable_nmi_window(struct kvm_vcpu *vcpu)
 
 static int pvm_nmi_allowed(struct kvm_vcpu *vcpu, bool for_injection)
 {
-	return !pvm_get_nmi_mask(vcpu) && !pvm_get_interrupt_shadow(vcpu);
+	return !pvm_get_nmi_mask(vcpu);
 }
 
 /* Always inject the exception directly and consume the event. */

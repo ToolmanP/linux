@@ -36,6 +36,13 @@
 #define __USER_DS (GDT_ENTRY_DEFAULT_USER_DS * 8 + 3)
 #define __USER_CS (GDT_ENTRY_DEFAULT_USER_CS * 8 + 3)
 
+
+#define INTR_MASK_IF_BIT 0
+#define INTR_MASK_IF 1
+
+#define INTR_MASK_NMI_BIT 1
+#define INTR_MASK_NMI 2
+
 #define SWITCH_ENTER_EFLAGS_ALLOWED                                         \
 	(X86_EFLAGS_FIXED | X86_EFLAGS_IF | X86_EFLAGS_TF | X86_EFLAGS_RF | \
 	 X86_EFLAGS_AC | X86_EFLAGS_OF | X86_EFLAGS_DF | X86_EFLAGS_SF |    \

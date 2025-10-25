@@ -25,11 +25,11 @@ SYM_CODE_START(entry_DIRECTCALL_64_yui)
 	pushq %rbp
 	movq %rsp, %rbp
 	xorq $SWITCH_FLAGS_MOD_TOGGLE, PER_CPU_VAR(pvm_vcpu_struct + PVCS_switch_flags)
-	movq $0, PER_CPU_VAR(pvm_vcpu_struct + PVCS_intr_mask)
+	andq $(~AZUCAT_INTR_MASK_IF), PER_CPU_VAR(pvm_vcpu_struct + PVCS_intr_mask)
 	pvm_enable_events
 	call do_syscall_64_yui
 	pvm_disable_events
-	movq $1, PER_CPU_VAR(pvm_vcpu_struct + PVCS_intr_mask)
+	orq $AZUCAT_INTR_MASK_IF, PER_CPU_VAR(pvm_vcpu_struct + PVCS_intr_mask)
 	xorq $SWITCH_FLAGS_MOD_TOGGLE, PER_CPU_VAR(pvm_vcpu_struct + PVCS_switch_flags)
 	leave
 	RET
