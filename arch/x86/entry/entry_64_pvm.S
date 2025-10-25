@@ -4,6 +4,7 @@
 #include <asm/asm-offsets.h>
 #include <asm/percpu.h>
 #include <asm/pvm_para.h>
+#include <asm/switcher.h>
 
 #include "calling.h"
 
@@ -151,6 +152,10 @@ SYM_INNER_LABEL(pvm_restore_regs_and_return_to_usermode, SYM_L_GLOBAL)
 	STACKLEAK_ERASE_NOCLOBBER
 
 	addq	$6*8, %rsp
+SYM_INNER_LABEL(pvm_retu_rip_shim, SYM_L_GLOBAL)
+  orq $SWITCH_FLAGS_IRETU, PER_CPU_VAR(pvm_vcpu_struct + PVCS_switch_flags)
+  ANNOTATE_NOENDBR
+  syscall
 SYM_INNER_LABEL(pvm_retu_rip, SYM_L_GLOBAL)
 	ANNOTATE_NOENDBR
 	syscall

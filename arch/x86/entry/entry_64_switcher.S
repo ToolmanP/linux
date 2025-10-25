@@ -146,6 +146,8 @@ SYM_INNER_LABEL(entry_SYSCALL_64_switcher_safe_stack, SYM_L_GLOBAL)
 .L_no_pvcs:
 	movq TSS_extra(switch_flags), %rdi
 .L_switch:
+  testq $SWITCH_FLAGS_IRETU, %rdi
+  jnz   .L_switcher_iretu
 	testq	$SWITCH_FLAGS_NO_DS_TO_SMOD, %rdi
 #else
 	testq	$SWITCH_FLAGS_NO_DS_TO_SMOD, TSS_extra(switch_flags)
@@ -202,6 +204,44 @@ SYM_INNER_LABEL(entry_SYSCALL_64_switcher_safe_stack, SYM_L_GLOBAL)
 	/* No instruction can be added between seting the guest %rsp and doing sysretq */
 SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 	sysretq
+
+.L_switcher_iretu:
+  /* the registers only rcx and r11 needs to be restored */
+  popq %rdi
+  movq TSS_extra(pvcs), %rcx
+
+  movq PVCS_rip(%rcx), %r11
+  movq %r11, RIP-RIP(%rsp)
+
+  xorq %r11, %r11
+  movl PVCS_eflags(%rcx), %r11d
+  andq $SWITCH_ENTER_EFLAGS_ALLOWED, %r11
+  orq  $SWITCH_ENTER_EFLAGS_FIXED, %r11
+
+  movq %r11, PVCS_vm_rflags(%rcx)
+  movq %r11, EFLAGS-RIP(%rsp)
+
+  movq RSP-RIP(%rsp), %r11
+  movq %r11, PVCS_kernel_rsp(%rcx)
+  movq PVCS_rsp(%rcx), %r11
+  movq %r11, RSP-RIP(%rsp)
+  
+	xorb	$SWITCH_FLAGS_MOD_TOGGLE, PVCS_switch_flags(%rcx)
+  andq  $(~SWITCH_FLAGS_IRETU), PVCS_switch_flags(%rcx)
+  andq $(~AZUCAT_INTR_MASK_NMI), PVCS_intr_mask(%rcx)
+
+  pushq PVCS_rcx(%rcx)
+  pushq PVCS_r11(%rcx)
+
+  movq PVCS_user_gsbase(%rcx), %r11
+
+  swapgs
+  wrgsbase %r11
+
+  popq %r11
+  popq %rcx
+
+  iretq
 
 .L_switcher_check_return_umod_instruction:
 	UNWIND_HINT_IRET_REGS offset=8
