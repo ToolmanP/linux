@@ -206,6 +206,11 @@ SYM_INNER_LABEL(pvm_restore_regs_and_return_to_kernel, SYM_L_GLOBAL)
 	movq	%rcx, PER_CPU_VAR(pvm_vcpu_struct + PVCS_rsp)
 
 	addq	$6*8, %rsp
+
+SYM_INNER_LABEL(pvm_rets_rip_shim, SYM_L_GLOBAL)
+  ANNOTATE_NOENDBR
+  orq $SWITCH_FLAGS_IRETS, PER_CPU_VAR(pvm_vcpu_struct + PVCS_switch_flags)
+  syscall
 SYM_INNER_LABEL(pvm_rets_rip, SYM_L_GLOBAL)
 	ANNOTATE_NOENDBR
 	syscall

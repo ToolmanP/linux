@@ -146,6 +146,8 @@ SYM_INNER_LABEL(entry_SYSCALL_64_switcher_safe_stack, SYM_L_GLOBAL)
 .L_no_pvcs:
 	movq TSS_extra(switch_flags), %rdi
 .L_switch:
+  testq $SWITCH_FLAGS_IRETS, %rdi
+  jnz   .L_switcher_irets
   testq $SWITCH_FLAGS_IRETU, %rdi
   jnz   .L_switcher_iretu
 	testq	$SWITCH_FLAGS_NO_DS_TO_SMOD, %rdi
@@ -205,8 +207,7 @@ SYM_INNER_LABEL(entry_SYSCALL_64_switcher_safe_stack, SYM_L_GLOBAL)
 SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 	sysretq
 
-.L_switcher_iretu:
-  /* the registers only rcx and r11 needs to be restored */
+.L_switcher_irets:
   popq %rdi
   movq TSS_extra(pvcs), %rcx
 
@@ -215,32 +216,85 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 
   xorq %r11, %r11
   movl PVCS_eflags(%rcx), %r11d
+
+  andq $(~PVM_EVENT_FLAGS_EP), PVCS_event_flags(%rcx)
+  andq $(~SWITCH_FLAGS_NMI_WIN), PVCS_switch_flags(%rcx)
+  andq $(~AZUCAT_INTR_MASK_NMI), PVCS_intr_mask(%rcx)
+
+  orq   $PVM_EVENT_FLAGS_EF, PVCS_event_flags(%rcx)
+
+  testq $X86_EFLAGS_IF, %r11
+  jz    .Lswitcher_iret_postlogue_s
+
+  orq $PVM_EVENT_FLAGS_IF, PVCS_event_flags(%rcx)
+
+  andq $(~PVM_EVENT_FLAGS_IP), PVCS_event_flags(%rcx)
+  andq $(~SWITCH_FLAGS_IRQ_WIN), PVCS_switch_flags(%rcx)
+
+.Lswitcher_iret_postlogue_s:
   andq $SWITCH_ENTER_EFLAGS_ALLOWED, %r11
   orq  $SWITCH_ENTER_EFLAGS_FIXED, %r11
-
+  
   movq %r11, PVCS_vm_rflags(%rcx)
   movq %r11, EFLAGS-RIP(%rsp)
 
-  movq RSP-RIP(%rsp), %r11
+  movq RSP-RIP(%rsp), %r11 /* rsp reload */
   movq %r11, PVCS_kernel_rsp(%rcx)
   movq PVCS_rsp(%rcx), %r11
   movq %r11, RSP-RIP(%rsp)
-  
-	xorb	$SWITCH_FLAGS_MOD_TOGGLE, PVCS_switch_flags(%rcx)
-  andq  $(~SWITCH_FLAGS_IRETU), PVCS_switch_flags(%rcx)
-  andq $(~AZUCAT_INTR_MASK_NMI), PVCS_intr_mask(%rcx)
 
   pushq PVCS_rcx(%rcx)
   pushq PVCS_r11(%rcx)
 
-  movq PVCS_user_gsbase(%rcx), %r11
+  andq  $(~SWITCH_FLAGS_IRETS), PVCS_switch_flags(%rcx)
+  swapgs
 
+  popq %r11
+  popq %rcx
+  iretq
+.L_switcher_iretu:
+  popq %rdi
+  movq TSS_extra(pvcs), %rcx
+
+  movq PVCS_rip(%rcx), %r11
+  movq %r11, RIP-RIP(%rsp)
+
+  xorq %r11, %r11
+  movl PVCS_eflags(%rcx), %r11d
+
+  andq $(~PVM_EVENT_FLAGS_EP), PVCS_event_flags(%rcx)
+  andq $(~SWITCH_FLAGS_NMI_WIN), PVCS_switch_flags(%rcx)
+  andq $(~AZUCAT_INTR_MASK_NMI), PVCS_intr_mask(%rcx)
+
+  testq $X86_EFLAGS_IF, %r11
+  jz    .Lswitcher_iret_postlogue_u
+
+  andq $(~PVM_EVENT_FLAGS_IP), PVCS_event_flags(%rcx)
+  andq $(~SWITCH_FLAGS_IRQ_WIN), PVCS_switch_flags(%rcx)
+
+.Lswitcher_iret_postlogue_u:
+  andq $SWITCH_ENTER_EFLAGS_ALLOWED, %r11
+  orq  $SWITCH_ENTER_EFLAGS_FIXED, %r11
+  
+  movq %r11, PVCS_vm_rflags(%rcx)
+  movq %r11, EFLAGS-RIP(%rsp)
+
+  movq RSP-RIP(%rsp), %r11 /* rsp reload */
+  movq %r11, PVCS_kernel_rsp(%rcx)
+  movq PVCS_rsp(%rcx), %r11
+  movq %r11, RSP-RIP(%rsp)
+
+  pushq PVCS_rcx(%rcx)
+  pushq PVCS_r11(%rcx)
+
+  andq  $(~SWITCH_FLAGS_IRETU), PVCS_switch_flags(%rcx)
+  xorb	$SWITCH_FLAGS_MOD_TOGGLE, PVCS_switch_flags(%rcx)
+  movq PVCS_user_gsbase(%rcx), %r11
   swapgs
   wrgsbase %r11
 
   popq %r11
   popq %rcx
-
   iretq
 
 .L_switcher_check_return_umod_instruction:
