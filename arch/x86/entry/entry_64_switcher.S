@@ -79,9 +79,11 @@ SYM_FUNC_START(switcher_enter_guest)
 
 SYM_INNER_LABEL(switcher_return_from_guest, SYM_L_GLOBAL)
 	/* switch back to host cr3 when still on sp0/ist stack */
+  cmpq  $SWITCH_EXIT_REASONS_SYSCALL, 0x4(%rsp)
+  je    .Lskip_host_cr3_switch
 	movq	TSS_extra(host_cr3), %rax
 	movq	%rax, %cr3
-
+.Lskip_host_cr3_switch:
 	MITIGATION_ENTER
 
 	/* Restore to host RSP and mark the switcher inactive */
@@ -172,8 +174,6 @@ SYM_INNER_LABEL(entry_SYSCALL_64_switcher_safe_stack, SYM_L_GLOBAL)
 #else
 	xorb	$SWITCH_FLAGS_MOD_TOGGLE, TSS_extra(switch_flags)
 #endif
-	movq	TSS_extra(smod_cr3), %rcx
-	movq	%rcx, %cr3
 
 	/* load smod registers from TSS_extra to sp0 stack or %r11 */
 #ifdef CONFIG_KVM_AZUCAT
@@ -332,8 +332,6 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 	movq	%rcx, TSS_extra(smod_rsp)
 	xorb  $SWITCH_FLAGS_MOD_TOGGLE, TSS_extra(switch_flags)
 #endif
-	movq	TSS_extra(umod_cr3), %rcx
-	movq	%rcx, %cr3
 
 	/* switch host gsbase to guest gsbase, TSS_extra can't be use afterward */
 	swapgs
