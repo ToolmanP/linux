@@ -47,6 +47,8 @@ static long tsumugi(long a1, long a2, long a3, long a4, long a5, long a6,
 		if (unlikely(!pvcs.yui_entry)) 
 			call_yui(__SYS_PVCS_SET_TLS, (unsigned long)(&pvcs), 0,
 			0, 0, 0, 0);
+			call_yui(__SYS_SPLIT_VMM_ENABLE, (unsigned long)(&pvcs), 0,
+			0, 0, 0, 0);
 		ret = jump_to_yui(a1, a2, a3, a4, a5, a6, a7);
 	} else {
 		ret = call_yui(a1, a2, a3, a4, a5, a6, a7);

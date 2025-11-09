@@ -805,6 +805,10 @@ struct kvm {
 	bool vm_bugged;
 	bool vm_dead;
 
+	unsigned long page_offset_base;
+	unsigned long page_buffer_base;
+	unsigned long page_array_base;
+
 #ifdef CONFIG_HAVE_KVM_PM_NOTIFIER
 	struct notifier_block pm_notifier;
 #endif

@@ -8,6 +8,7 @@
 #include <asm/asm.h>
 #include <asm/nospec-branch.h>
 #include <asm/switcher.h>
+#include <asm/pvm_para.h>
 
 #include "calling.h"
 
@@ -121,6 +122,9 @@ EXPORT_SYMBOL_GPL(switcher_enter_guest)
 SYM_CODE_START(entry_SYSCALL_64_switcher)
 	UNWIND_HINT_ENTRY
 	ENDBR
+
+	cmpl	$0xbeefdead, %r9d
+	je	.L_sysret_fast_hypercall
 
 	swapgs
 	/* tss.sp2 is scratch space. */
@@ -388,5 +392,35 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 
 	PUSH_AND_CLEAR_REGS
 	jmp	switcher_return_from_guest
+
+.L_sysret_fast_hypercall:
+	swapgs
+
+	movq	%rsp, %r12
+	movq	%rcx, %r13
+	movq	%r11, %r14
+
+	movq	TSS_extra(fast_hypercall_rsp), %rsp
+
+	# movq	TSS_extra(smod_cr3), %r9
+	# movq	%r9, %cr3
+
+	movq	%cr3, %r11
+	movq	%r11, TSS_extra(fast_hypercall_current_cr3)
+
+	movq	%r10, %rcx
+	call	do_fast_hypercall
+
+	# movq	TSS_extra(enter_cr3), %r9
+	# movq	%r9, %cr3
+
+	movq	%r14, %r11
+	movq	%r13, %rcx
+	movq	%r12, %rsp
+	xorq	%r9, %r9
+
+	swapgs
+
+	sysretq
 SYM_CODE_END(entry_SYSCALL_64_switcher)
 EXPORT_SYMBOL_GPL(entry_SYSCALL_64_switcher)

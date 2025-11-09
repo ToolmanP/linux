@@ -46,8 +46,15 @@ static inline long runpv_hypercall0(long nr)
 	return runpv_hypercall1(nr, 0);
 }
 
+void __init runpv_early_setup(void);
+
 #else
 static inline void runpv_setup_pvcs(int cpu) { }
+
+static inline void runpv_early_setup(void) {
+
+}
+
 static inline int runpv_remap_pvcs_tls(struct task_struct *p, int dest_cpu) {
   return 0;
 }

@@ -824,6 +824,9 @@ static void account_shadowed(struct kvm *kvm, struct kvm_mmu_page *sp)
 	struct kvm_memory_slot *slot;
 	gfn_t gfn;
 
+	extern void runpv_mark_page_pt_shadow_pfn(struct runpv_page_array *page_array, unsigned long gfn, unsigned long shadow_pfn);
+	runpv_mark_page_pt_shadow_pfn((struct runpv_page_array *)kvm->page_array_base, sp->gfn, virt_to_phys(sp->spt) >> PAGE_SHIFT);
+
 	kvm->arch.indirect_shadow_pages++;
 	gfn = sp->gfn;
 	slots = kvm_memslots_for_spte_role(kvm, sp->role);
@@ -871,6 +874,9 @@ static void unaccount_shadowed(struct kvm *kvm, struct kvm_mmu_page *sp)
 	struct kvm_memslots *slots;
 	struct kvm_memory_slot *slot;
 	gfn_t gfn;
+
+	extern void runpv_unmark_page_pt_shadow_pfn(struct runpv_page_array *page_array, unsigned long gfn, unsigned long shadow_pfn);
+	runpv_unmark_page_pt_shadow_pfn((struct runpv_page_array *)kvm->page_array_base, sp->gfn, virt_to_phys(sp->spt) >> PAGE_SHIFT);
 
 	kvm->arch.indirect_shadow_pages--;
 	gfn = sp->gfn;

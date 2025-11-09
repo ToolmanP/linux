@@ -163,11 +163,9 @@ struct pvm_vcpu_struct {
 };
 #endif
 
-
 #if defined(CONFIG_RUNPV_GUEST) || defined(CONFIG_KVM_RUNPV)
-// RUNPV-TODO: should be in proportion to the guest PA size
-#define RUNPV_PAGE_ARRAY_PFN_COUNT	(10 << (30 - 12))
 #define RUNPV_PAGE_ARRAY_SHADOW_COUNT	(16)
+#define RUNPV_PAGE_ARRAY_SLOT_NR (64)
 
 typedef struct {
 	unsigned long val;
@@ -186,11 +184,23 @@ typedef struct {
 #define runpv_check_pae_pst(pae) ((pae).val & RUNPV_PAE_PST)
 #define runpv_check_pae_pt(pae) ((pae).val & RUNPV_PAE_PT)
 
-struct runpv_page_array {
+struct runpv_page_array_entry {
+	runpv_pae_t pfn;
+	unsigned long shadow_pfn[RUNPV_PAGE_ARRAY_SHADOW_COUNT];
+};
+
+struct runpv_page_array_slot {
 	unsigned long gfn_start;
 	unsigned long gfn_size;
-	runpv_pae_t pfn[RUNPV_PAGE_ARRAY_PFN_COUNT];
-	unsigned long shadow_pfn[RUNPV_PAGE_ARRAY_PFN_COUNT][RUNPV_PAGE_ARRAY_SHADOW_COUNT];
+	struct runpv_page_array_entry entries[0];
+};
+
+#define size_of_runpv_page_array_slot(gfn_count) \
+	(sizeof(struct runpv_page_array_slot) + \
+	 sizeof(struct runpv_page_array_entry) * (gfn_count))
+
+struct runpv_page_array {
+	struct runpv_page_array_slot *slots[RUNPV_PAGE_ARRAY_SLOT_NR];
 };
 
 #include <linux/spinlock.h>
@@ -217,7 +227,6 @@ struct runpv_page_buffer {
 #define pv_err(debug_switch, ...) pv_print(debug_switch, pr_err, __VA_ARGS__)
 
 #endif
-
 #endif /* __ASSEMBLY__ */
 
 #endif /* _UAPI_ASM_X86_PVM_PARA_H */

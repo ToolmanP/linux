@@ -18,6 +18,8 @@
 #include <asm/io_bitmap.h>
 #include <asm/pvm_para.h>
 #include <asm/mmu_context.h>
+#include <asm/pgtable_types.h>
+#include <asm/page.h>
 
 #include "cpuid.h"
 #include "lapic.h"
@@ -2207,6 +2209,98 @@ static int handle_hc_load_tls(struct kvm_vcpu *vcpu, unsigned long tls_desc_0,
 	return 1;
 }
 
+/* Producer: replenish pages ring with freshly allocated 4K pages */
+static void sync_pages(struct runpv_page_buffer *page_buffer)
+{
+	unsigned long flags;
+	unsigned long va_list[RUNPV_PAGE_BUFFER_PAGE_NR];
+	unsigned int alloc_count = 0, inserted = 0, i;
+
+	for (i = 0; i < RUNPV_PAGE_BUFFER_PAGE_NR; i++) {
+		unsigned long va = __get_free_pages(GFP_KERNEL, 0);
+		if (!va)
+			break;
+		va_list[alloc_count++] = va;
+	}
+
+	spin_lock_irqsave(&page_buffer->lock, flags);
+	for (i = 0; i < alloc_count; i++) {
+		unsigned long next = (page_buffer->page_rear + 1) % RUNPV_PAGE_BUFFER_PAGE_NR;
+		if (next == page_buffer->page_head)
+			break; /* ring full */
+		page_buffer->alloc_pfns[page_buffer->page_rear] = __pa(va_list[i]) >> PAGE_SHIFT;
+		page_buffer->page_rear = next;
+		inserted++;
+	}
+	spin_unlock_irqrestore(&page_buffer->lock, flags);
+
+	for (i = inserted; i < alloc_count; i++)
+		free_pages(va_list[i], 0);
+}
+
+/* Consumer: drain returned pages and free them back to buddy allocator */
+static void sync_free_pages(struct runpv_page_buffer *page_buffer)
+{
+	unsigned long flags;
+	unsigned long pa_list[RUNPV_PAGE_BUFFER_PAGE_NR];
+	unsigned int count = 0, i;
+
+	spin_lock_irqsave(&page_buffer->lock, flags);
+	while (page_buffer->free_head != page_buffer->free_rear && count < RUNPV_PAGE_BUFFER_PAGE_NR) {
+		unsigned long pa = page_buffer->free_pfns[page_buffer->free_head] << PAGE_SHIFT;
+		page_buffer->free_head = (page_buffer->free_head + 1) % RUNPV_PAGE_BUFFER_PAGE_NR;
+		if (!pa)
+			continue;
+		pa_list[count++] = pa;
+	}
+	spin_unlock_irqrestore(&page_buffer->lock, flags);
+
+	for (i = 0; i < count; i++) {
+		void *va = phys_to_virt(pa_list[i] & PAGE_MASK);
+		free_pages((unsigned long)va, 0);
+	}
+}
+
+static void init_page_buffer(unsigned long page_buffer_base)
+{
+	struct runpv_page_buffer *page_buffer = (struct runpv_page_buffer *)page_buffer_base;
+	spin_lock_init(&page_buffer->lock);
+	page_buffer->magic = 0xdeadbeef;
+	page_buffer->page_head = 0;
+	page_buffer->page_rear = 0;
+	page_buffer->free_head = 0;
+	page_buffer->free_rear = 0;
+}
+
+static void init_page_array(unsigned long page_array_base)
+{
+	int i;
+	struct runpv_page_array *page_array = (struct runpv_page_array *)page_array_base;
+	for (i = 0; i < RUNPV_PAGE_ARRAY_SLOT_NR; i++) {
+		page_array->slots[i] = NULL;
+	}
+}
+
+static int handle_hc_sync_pages(struct kvm *kvm)
+{
+	struct runpv_page_buffer *page_buffer = (struct runpv_page_buffer *)kvm->page_buffer_base;
+	sync_pages(page_buffer);
+	return 1;
+}
+
+static int handle_hc_sync_free_pages(struct kvm *kvm)
+{
+	struct runpv_page_buffer *page_buffer = (struct runpv_page_buffer *)kvm->page_buffer_base;
+	sync_free_pages(page_buffer);
+	return 1;
+}
+
+static int handle_hc_set_page_offset_base(struct kvm_vcpu *vcpu, unsigned long base)
+{
+	vcpu->kvm->page_offset_base = base;
+	return 1;
+}
+
 static int handle_kvm_hypercall(struct kvm_vcpu *vcpu)
 {
 	int r;
@@ -2261,6 +2355,12 @@ static int handle_exit_syscall(struct kvm_vcpu *vcpu)
 		return handle_hc_wrmsr(vcpu, a0, a1);
 	case PVM_HC_LOAD_TLS:
 		return handle_hc_load_tls(vcpu, a0, a1, a2);
+	case PVM_HC_SYNC_PAGES:
+		return handle_hc_sync_pages(vcpu->kvm);
+	case PVM_HC_SYNC_FREE_PAGES:
+		return handle_hc_sync_free_pages(vcpu->kvm);
+	case PVM_HC_SET_PAGE_OFFSET_BASE:
+		return handle_hc_set_page_offset_base(vcpu, a0);
 	default:
 		return handle_kvm_hypercall(vcpu);
 	}
@@ -2855,6 +2955,12 @@ static fastpath_t pvm_vcpu_run(struct kvm_vcpu *vcpu)
 		return EXIT_FASTPATH_NONE;
 	}
 
+	this_cpu_write(cpu_tss_rw.tss_ex.fast_hypercall_rsp, pvm->fast_hypercall_stack);
+	this_cpu_write(cpu_tss_rw.tss_ex.page_buffer_base, vcpu->kvm->page_buffer_base);
+	this_cpu_write(cpu_tss_rw.tss_ex.page_array_base, vcpu->kvm->page_array_base);
+	this_cpu_write(cpu_tss_rw.tss_ex.page_offset_base, vcpu->kvm->page_offset_base);
+	this_cpu_write(cpu_tss_rw.tss_ex.mmu_lock_ptr, (unsigned long)&vcpu->kvm->mmu_lock);
+
 	trace_kvm_entry(vcpu);
 
 	pvm_load_guest_xsave_state(vcpu);
@@ -3004,6 +3110,13 @@ static int pvm_vcpu_create(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_pvm *pvm = to_pvm(vcpu);
 
+	/* Allocate per-VCPU hypercall stack */
+	pvm->fast_hypercall_stack = __get_free_page(GFP_KERNEL);
+	if (!pvm->fast_hypercall_stack) {
+		return -ENOMEM;
+	}
+	pvm->fast_hypercall_stack += PAGE_SIZE; /* Point to top of stack */
+
 	BUILD_BUG_ON(offsetof(struct vcpu_pvm, vcpu) != 0);
 
 	pvm->switch_flags = SWITCH_FLAGS_INIT;
@@ -3017,6 +3130,12 @@ static void pvm_vcpu_free(struct kvm_vcpu *vcpu)
 	struct vcpu_pvm *pvm = to_pvm(vcpu);
 
 	kvm_gpc_deactivate(&pvm->pvcs_gpc);
+	
+	/* Free per-VCPU hypercall stack */
+	if (pvm->fast_hypercall_stack) {
+		free_page(pvm->fast_hypercall_stack - PAGE_SIZE);
+		pvm->fast_hypercall_stack = 0;
+	}
 }
 
 static void pvm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
@@ -3026,7 +3145,21 @@ static void pvm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
 static int pvm_vm_init(struct kvm *kvm)
 {
 	kvm->arch.host_mmu_root_pgd = host_mmu_root_pgd;
+	kvm->page_buffer_base = (unsigned long)kvmalloc(sizeof(struct runpv_page_buffer), GFP_KERNEL | __GFP_ZERO);
+	if (!kvm->page_buffer_base)
+		return -ENOMEM;
+	init_page_buffer(kvm->page_buffer_base);
+	kvm->page_array_base = (unsigned long)kvmalloc(sizeof(struct runpv_page_array), GFP_KERNEL | __GFP_ZERO);
+	if (!kvm->page_array_base)
+		return -ENOMEM;
+	init_page_array(kvm->page_array_base);
 	return 0;
+}
+
+static void pvm_vm_destroy(struct kvm *kvm)
+{
+	kvfree((void *)kvm->page_buffer_base);
+	kvfree((void *)kvm->page_array_base);
 }
 
 static int hardware_enable(void)
@@ -3265,6 +3398,7 @@ static struct kvm_x86_ops pvm_x86_ops __initdata = {
 
 	.vm_size = sizeof(struct kvm_pvm),
 	.vm_init = pvm_vm_init,
+	.vm_destroy = pvm_vm_destroy,
 
 	.vcpu_create = pvm_vcpu_create,
 	.vcpu_free = pvm_vcpu_free,

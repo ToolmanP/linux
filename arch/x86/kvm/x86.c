@@ -12935,6 +12935,13 @@ static void kvm_mmu_slot_apply_flags(struct kvm *kvm,
 	}
 }
 
+/* Forward declarations for PVM page array functions */
+extern void runpv_register_page_array_slot(struct runpv_page_array *page_array,
+					    unsigned long gfn_start,
+					    unsigned long gfn_size);
+extern void runpv_unregister_page_array_slot(struct runpv_page_array *page_array,
+					      unsigned long gfn_start);
+
 void kvm_arch_commit_memory_region(struct kvm *kvm,
 				struct kvm_memory_slot *old,
 				const struct kvm_memory_slot *new,
@@ -12942,6 +12949,26 @@ void kvm_arch_commit_memory_region(struct kvm *kvm,
 {
 	if (change == KVM_MR_DELETE)
 		kvm_page_track_delete_slot(kvm, old);
+
+	/* Handle PVM page array slot registration */
+	if (kvm->page_array_base) {
+		struct runpv_page_array *page_array = (struct runpv_page_array *)kvm->page_array_base;
+
+		/* BUG if trying to modify a slot (not supported) */
+		if (change == KVM_MR_MOVE || change == KVM_MR_FLAGS_ONLY) {
+			pr_err("PVM does not support moving or modifying memory slots\n");
+			BUG();
+		}
+
+		if (change == KVM_MR_CREATE && new) {
+			runpv_register_page_array_slot(page_array,
+							new->base_gfn,
+							new->npages);
+		} else if (change == KVM_MR_DELETE && old) {
+			runpv_unregister_page_array_slot(page_array,
+							 old->base_gfn);
+		}
+	}
 
 	if (!kvm->arch.n_requested_mmu_pages &&
 	    (change == KVM_MR_CREATE || change == KVM_MR_DELETE)) {

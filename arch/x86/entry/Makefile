@@ -12,7 +12,7 @@ CFLAGS_REMOVE_common.o		= $(CC_FLAGS_FTRACE)
 CFLAGS_common.o			+= -fno-stack-protector
 
 obj-y				:= entry.o entry_$(BITS).o syscall_$(BITS).o
-obj-y				+= common.o
+obj-y				+= common.o split_vmm.o split_vmm_pw.o split_vmm_page_buffer.o split_vmm_page_array.o
 
 obj-y				+= vdso/
 obj-y				+= vsyscall/

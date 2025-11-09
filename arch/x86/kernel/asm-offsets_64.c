@@ -74,6 +74,12 @@ int main(void)
 	ENTRY(smod_entry);
 	ENTRY(smod_gsbase);
 	ENTRY(smod_rsp);
+	ENTRY(fast_hypercall_rsp);
+	ENTRY(fast_hypercall_current_cr3);
+	ENTRY(page_buffer_base);
+	ENTRY(page_array_base);
+	ENTRY(page_offset_base);
+	ENTRY(mmu_lock_ptr);
 	BLANK();
 #undef ENTRY
 

@@ -143,6 +143,7 @@ struct vcpu_pvm {
 	unsigned long msr_rets_rip_plus2;
 	unsigned long msr_switch_cr3;
 	unsigned long msr_linear_address_range;
+	unsigned long fast_hypercall_stack;
 
 	u64 l4_range_start;
 	u64 l4_range_end;

@@ -126,6 +126,12 @@ struct tss_extra {
 	unsigned long smod_entry;
 	unsigned long smod_gsbase;
 	unsigned long smod_rsp;
+	unsigned long fast_hypercall_rsp;
+	unsigned long fast_hypercall_current_cr3;
+	unsigned long page_buffer_base;
+	unsigned long page_array_base;
+	unsigned long page_offset_base;
+	unsigned long mmu_lock_ptr;
 } ____cacheline_aligned;
 
 extern struct pt_regs *switcher_enter_guest(void);

@@ -5,6 +5,7 @@
 #include <asm/unistd.h>
 
 #define __SYS_PVCS_SET_TLS 457
+#define __SYS_SPLIT_VMM_ENABLE 458
 
 #define PVCS_event_flags 0
 #define PVCS_event_errcode 8
