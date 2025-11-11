@@ -12,6 +12,9 @@
 
 #include <linux/mm_types.h>
 #include <linux/nospec.h>
+#include <linux/spinlock.h>
+#include <linux/errno.h>
+#include <linux/ktime.h>
 
 #include <asm/cpufeature.h>
 #include <asm/cpu_entry_area.h>
@@ -27,52 +30,6 @@ unsigned long pvm_range_start __initdata;
 unsigned long pvm_range_end __initdata;
 
 static bool early_traps_setup __initdata;
-
-static __always_inline long pvm_hypercall0(unsigned int nr)
-{
-	long ret;
-
-	asm volatile("call pvm_hypercall"
-		     : "=a"(ret)
-		     : "a"(nr)
-		     : "memory");
-	return ret;
-}
-
-static __always_inline long pvm_hypercall1(unsigned int nr, unsigned long p1)
-{
-	long ret;
-
-	asm volatile("call pvm_hypercall"
-		     : "=a"(ret)
-		     : "a"(nr), "b"(p1)
-		     : "memory");
-	return ret;
-}
-
-static __always_inline long pvm_hypercall2(unsigned int nr, unsigned long p1,
-					   unsigned long p2)
-{
-	long ret;
-
-	asm volatile("call pvm_hypercall"
-		     : "=a"(ret)
-		     : "a"(nr), "b"(p1), "c"(p2)
-		     : "memory");
-	return ret;
-}
-
-static __always_inline long pvm_hypercall3(unsigned int nr, unsigned long p1,
-					   unsigned long p2, unsigned long p3)
-{
-	long ret;
-
-	asm volatile("call pvm_hypercall"
-		     : "=a"(ret)
-		     : "a"(nr), "b"(p1), "c"(p2), "d"(p3)
-		     : "memory");
-	return ret;
-}
 
 static void pvm_load_gs_index(unsigned int sel)
 {
@@ -186,21 +143,6 @@ static void pvm_write_cr3(unsigned long val)
 		flags |= PVM_LOAD_PGTBL_FLAGS_LA57;
 	this_cpu_write(pvm_guest_cr3, pgd);
 	pvm_hypercall3(PVM_HC_LOAD_PGTBL, flags, pgd, pvm_user_pgd(pgd));
-}
-
-static void pvm_flush_tlb_user(void)
-{
-	pvm_hypercall0(PVM_HC_TLB_FLUSH_CURRENT);
-}
-
-static void pvm_flush_tlb_kernel(void)
-{
-	pvm_hypercall0(PVM_HC_TLB_FLUSH);
-}
-
-static void pvm_flush_tlb_one_user(unsigned long addr)
-{
-	pvm_hypercall1(PVM_HC_TLB_INVLPG, addr);
 }
 
 void __init pvm_early_event(struct pt_regs *regs)
@@ -477,9 +419,6 @@ void __init pvm_early_setup(void)
 	pv_ops.mmu.write_cr2 = pvm_write_cr2;
 	pv_ops.mmu.read_cr3 = pvm_read_cr3;
 	pv_ops.mmu.write_cr3 = pvm_write_cr3;
-	pv_ops.mmu.flush_tlb_user = pvm_flush_tlb_user;
-	pv_ops.mmu.flush_tlb_kernel = pvm_flush_tlb_kernel;
-	pv_ops.mmu.flush_tlb_one_user = pvm_flush_tlb_one_user;
 
 	this_cpu_write(pvm_vcpu_struct.event_flags, PVM_EVENT_FLAGS_EF);
 	wrmsrl(MSR_PVM_VCPU_STRUCT, __pa(this_cpu_ptr(&pvm_vcpu_struct)));
@@ -598,6 +537,7 @@ bool __init pvm_kernel_layout_relocate(void)
 		panic("The start of the allowed range is not aligned");
 
 	if (pgtable_l5_enabled()) {
+		BUG();
 		direct_mapping_size = PVM_DIRECT_MAPPING_L5_SIZE;
 		vmalloc_size = PVM_VMALLOC_L5_SIZE;
 		vmem_mapping_size = PVM_VMEM_MAPPING_L5_SIZE;
@@ -608,6 +548,8 @@ bool __init pvm_kernel_layout_relocate(void)
 		vmem_mapping_size = PVM_VMEM_MAPPING_L4_SIZE;
 		hole_size = HOLE_L4_SIZE;
 	}
+
+	pvm_hypercall1(PVM_HC_SET_PAGE_OFFSET_BASE, (unsigned long)page_offset_base);
 
 	area_size = max_pfn << PAGE_SHIFT;
 	if (area_size > direct_mapping_size)

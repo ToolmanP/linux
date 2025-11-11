@@ -558,6 +558,8 @@ asmlinkage long sys_futex_wait(void __user *uaddr, unsigned long val, unsigned l
 asmlinkage long sys_futex_requeue(struct futex_waitv __user *waiters,
 				  unsigned int flags, int nr_wake, int nr_requeue);
 
+asmlinkage long sys_set_runpv_up(void);
+
 asmlinkage long sys_nanosleep(struct __kernel_timespec __user *rqtp,
 			      struct __kernel_timespec __user *rmtp);
 asmlinkage long sys_nanosleep_time32(struct old_timespec32 __user *rqtp,
@@ -1164,6 +1166,7 @@ asmlinkage long sys_old_mmap(struct mmap_arg_struct __user *arg);
 
 /* Azucatainer specific system calls */
 asmlinkage long sys_pvcs_set_tls(unsigned long addr);
+asmlinkage long sys_split_vmm_enable(void);
 
 /*
  * Not a real system call, but a placeholder for syscalls which are

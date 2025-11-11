@@ -80,6 +80,14 @@ SYM_FUNC_START(pvm_hypercall)
 	RET
 SYM_FUNC_END(pvm_hypercall)
 
+SYM_FUNC_START(runpv_hypercall)
+	movq	$0xbeefdead, %r9
+	UNWIND_HINT_SAVE
+	syscall
+	UNWIND_HINT_RESTORE
+	RET
+SYM_FUNC_END(runpv_hypercall)
+
 SYM_FUNC_START(pvm_save_fl)
 	movq	PER_CPU_VAR(pvm_vcpu_struct + PVCS_event_flags), %rax
 	RET

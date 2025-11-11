@@ -203,6 +203,9 @@ struct page {
 	struct page *kmsan_shadow;
 	struct page *kmsan_origin;
 #endif
+#ifdef CONFIG_RUNPV_GUEST
+	unsigned long host_page;
+#endif
 } _struct_page_alignment;
 
 /*

@@ -68,6 +68,52 @@ static inline bool pvm_detect(void)
 
 	return true;
 }
+static __always_inline long pvm_hypercall0(unsigned int nr)
+{
+	long ret;
+
+	asm volatile("call pvm_hypercall"
+		     : "=a"(ret)
+		     : "a"(nr)
+		     : "memory");
+	return ret;
+}
+
+static __always_inline long pvm_hypercall1(unsigned int nr, unsigned long p1)
+{
+	long ret;
+
+	asm volatile("call pvm_hypercall"
+		     : "=a"(ret)
+		     : "a"(nr), "b"(p1)
+		     : "memory");
+	return ret;
+}
+
+static __always_inline long pvm_hypercall2(unsigned int nr, unsigned long p1,
+					   unsigned long p2)
+{
+	long ret;
+
+	asm volatile("call pvm_hypercall"
+		     : "=a"(ret)
+		     : "a"(nr), "b"(p1), "c"(p2)
+		     : "memory");
+	return ret;
+}
+
+
+static __always_inline long pvm_hypercall3(unsigned int nr, unsigned long p1,
+					   unsigned long p2, unsigned long p3)
+{
+	long ret;
+
+	asm volatile("call pvm_hypercall"
+		     : "=a"(ret)
+		     : "a"(nr), "b"(p1), "c"(p2), "d"(p3)
+		     : "memory");
+	return ret;
+}
 #else
 static inline void pvm_early_setup(void)
 {
@@ -103,6 +149,8 @@ void pvm_rets_rip(void);
 void pvm_save_fl(void);
 void pvm_irq_disable(void);
 void pvm_irq_enable(void);
+
+void runpv_hypercall(void);
 #endif /* !__ASSEMBLY__ */
 
 #endif /* _ASM_X86_PVM_PARA_H */

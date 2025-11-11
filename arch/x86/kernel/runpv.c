@@ -1,5 +1,6 @@
 #define pr_fmt(fmt) "runpv-guest: " fmt
 
+#include <linux/mm.h>
 #include <asm/syscall.h>
 #include <asm/runpv_para.h>
 #include <linux/mm_types.h>
@@ -12,6 +13,9 @@
 #include <asm/pvm_para.h>
 #include <asm/setup.h>
 #include <asm/traps.h>
+#include <linux/spinlock.h>
+#include <linux/errno.h>
+#include <linux/ktime.h>
 
 void runpv_setup_pvcs(int cpu)
 {
@@ -87,4 +91,163 @@ __visible noinstr bool do_syscall_64_runpv(struct pt_regs *regs, int nr)
 {
 	do_syscall_64(regs, nr);
 	return true;
+}
+
+#define HOST_PAGE_NONE		(0)
+#define HOST_PAGE_NORMAL	(1)
+#define HOST_PAGE_PT		(2)
+
+#define runpv_set_PT_DEBUG 0
+static inline int pte_is_host_page_normal(pte_t pte)
+{
+	if (pte.pte & _PAGE_PRESENT) {
+		struct page *page = pte_page(pte);
+		return page->host_page == HOST_PAGE_NORMAL;
+	}
+	return 1;
+}
+
+static inline long runpv_hc_set_pte(pte_t *ptep, pte_t pte)
+{
+	long ret = runpv_hypercall2(RUNPV_HC_SET_PTE, (long)ptep, (long)pte.pte);
+	if (ret == -ENODATA) {
+		pvm_hypercall0(PVM_HC_SYNC_PAGES);
+	}
+	return ret;
+}
+
+static inline int runpv_hc_bind_host_page(long gfn, int order, long page)
+{
+	for (;;) {
+		long ret = runpv_hypercall3(RUNPV_HC_BIND_HOST_PAGE, gfn, order, page);
+		if (ret == -ENODATA) {
+			pvm_hypercall0(PVM_HC_SYNC_PAGES);
+		} else {
+			return (int)ret;
+		}
+	}
+}
+static inline int runpv_hc_unbind_host_page(long gfn, unsigned long page)
+{
+	for (;;) {
+	long ret = runpv_hypercall2(RUNPV_HC_UNBIND_HOST_PAGE, gfn, page);
+		if (ret == -ENODATA) {
+			pvm_hypercall0(PVM_HC_SYNC_FREE_PAGES);
+		} else {
+			return (int)ret;
+		}
+	}
+}
+
+static inline int runpv_hc_mark_page_pt(long gfn, unsigned long page, int mark)
+{
+	long ret = runpv_hypercall3(RUNPV_HC_MARK_PAGE_PT, gfn, page, mark);
+	return (int)ret;
+}
+
+static int split_vmm_enable = 0;
+
+#include <linux/syscalls.h>
+
+SYSCALL_DEFINE0(split_vmm_enable)
+{
+	split_vmm_enable = 1;
+	return 0;
+}
+
+
+void runpv_alloc_page_hook(struct page *page, unsigned int order, gfp_t gfp_flags)
+{
+	int ret;
+	if (order) {
+		return;
+	}
+	BUG_ON(page->host_page != HOST_PAGE_NONE);
+	if (gfp_flags & __GFP_PT) {
+		ret = runpv_hc_mark_page_pt(page_to_pfn(page), (unsigned long)page_to_virt(page), 1);
+		page->host_page = HOST_PAGE_PT;
+	} else if (split_vmm_enable) {
+		ret = runpv_hc_bind_host_page(page_to_pfn(page), order, (long) page_to_virt(page));
+		if (ret == 0) {
+			page->host_page = HOST_PAGE_NORMAL;
+		}
+	}
+}
+EXPORT_SYMBOL(runpv_alloc_page_hook);
+
+void runpv_free_page_hook(struct page *page, unsigned int order)
+{
+	int ret;
+	if (page->host_page == HOST_PAGE_PT) {
+		ret = runpv_hc_mark_page_pt(page_to_pfn(page), (unsigned long)page_to_virt(page), 0);
+		page->host_page = HOST_PAGE_NONE;
+	} else if (page->host_page == HOST_PAGE_NORMAL) {
+		ret = runpv_hc_unbind_host_page(page_to_pfn(page), (unsigned long)page_to_virt(page));
+		page->host_page = HOST_PAGE_NONE;
+	}
+}
+EXPORT_SYMBOL(runpv_free_page_hook);
+
+static int runpv_try_set_pte(pte_t *pte, pte_t entry)
+{
+	long ret;
+	if (!split_vmm_enable) return -1;
+	if (!pte_is_host_page_normal(*pte)) return -1;
+	if (!pte_is_host_page_normal(entry)) return -1;
+	ret = runpv_hc_set_pte(pte, entry);
+	if (ret == 0) {
+		BUG_ON(pte->pte != entry.pte);
+	}
+	return ret;
+}
+
+
+static void runpv_set_pte(pte_t *ptep, pte_t pteval)
+{
+	if (runpv_try_set_pte(ptep, pteval)) {
+		native_set_pte(ptep, pteval);
+	}
+}
+
+static void runpv_set_pmd(pmd_t *pmdp, pmd_t pmdval)
+{
+	native_set_pmd(pmdp, pmdval);
+}
+
+static void runpv_set_pud(pud_t *pudp, pud_t pudval)
+{
+	native_set_pud(pudp, pudval);
+}
+
+static void runpv_set_p4d(p4d_t *p4dp, p4d_t p4dval)
+{
+	native_set_p4d(p4dp, p4dval);
+}
+
+static void runpv_flush_tlb_user(void)
+{
+	runpv_hypercall0(RUNPV_HC_TLB_FLUSH_CURRENT);
+	pvm_hypercall0(PVM_HC_TLB_FLUSH_CURRENT);
+}
+
+static void runpv_flush_tlb_kernel(void)
+{
+	runpv_hypercall0(RUNPV_HC_TLB_FLUSH);
+	pvm_hypercall0(PVM_HC_TLB_FLUSH);
+}
+
+static void runpv_flush_tlb_one_user(unsigned long addr)
+{
+	runpv_hypercall1(RUNPV_HC_TLB_INVLPG, addr);
+	pvm_hypercall1(PVM_HC_TLB_INVLPG, addr);
+}
+
+void __init runpv_early_setup(void){
+	pv_ops.mmu.set_pte = runpv_set_pte;
+	pv_ops.mmu.set_pmd = runpv_set_pmd;
+	pv_ops.mmu.set_pud = runpv_set_pud;
+	pv_ops.mmu.set_p4d = runpv_set_p4d;
+	pv_ops.mmu.flush_tlb_user = runpv_flush_tlb_user;
+	pv_ops.mmu.flush_tlb_kernel = runpv_flush_tlb_kernel;
+	pv_ops.mmu.flush_tlb_one_user = runpv_flush_tlb_one_user;
 }

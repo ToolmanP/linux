@@ -60,7 +60,21 @@
 #define PVM_HC_RDMSR			(PVM_HC_SPECIAL_BASE+7)
 #define PVM_HC_WRMSR			(PVM_HC_SPECIAL_BASE+8)
 #define PVM_HC_LOAD_TLS			(PVM_HC_SPECIAL_BASE+9)
-#define PVM_HC_TRANS_GVA  (PVM_HC_SPECIAL_BASE+10)
+#define PVM_HC_SYNC_PAGES		(PVM_HC_SPECIAL_BASE+10)
+#define PVM_HC_SYNC_FREE_PAGES	(PVM_HC_SPECIAL_BASE+11)
+#define PVM_HC_SET_PAGE_OFFSET_BASE	(PVM_HC_SPECIAL_BASE+12)
+
+#define RUNPV_HC_SPECIAL_MAX_NR		(256)
+#define RUNPV_HC_SPECIAL_BASE		PVM_HC_SPECIAL_MAX
+#define RUNPV_HC_SPECIAL_MAX		(RUNPV_HC_SPECIAL_BASE+RUNPV_HC_SPECIAL_MAX_NR)
+
+#define RUNPV_HC_SET_PTE			(RUNPV_HC_SPECIAL_BASE+0)
+#define RUNPV_HC_BIND_HOST_PAGE		(RUNPV_HC_SPECIAL_BASE+1)
+#define RUNPV_HC_UNBIND_HOST_PAGE	(RUNPV_HC_SPECIAL_BASE+2)
+#define RUNPV_HC_MARK_PAGE_PT		(RUNPV_HC_SPECIAL_BASE+3)
+#define RUNPV_HC_TLB_FLUSH			(RUNPV_HC_SPECIAL_BASE+4)
+#define RUNPV_HC_TLB_FLUSH_CURRENT	(RUNPV_HC_SPECIAL_BASE+5)
+#define RUNPV_HC_TLB_INVLPG		(RUNPV_HC_SPECIAL_BASE+6)
 
 /*
  * PVM_EVENT_FLAGS_EF
@@ -148,6 +162,62 @@ struct pvm_vcpu_struct {
 #else
 };
 #endif
+
+
+#if defined(CONFIG_RUNPV_GUEST) || defined(CONFIG_KVM_RUNPV)
+// RUNPV-TODO: should be in proportion to the guest PA size
+#define RUNPV_PAGE_ARRAY_PFN_COUNT	(10 << (30 - 12))
+#define RUNPV_PAGE_ARRAY_SHADOW_COUNT	(16)
+
+typedef struct {
+	unsigned long val;
+} runpv_pae_t;
+
+#define RUNPV_PAE_PST			(_BITUL(0))
+#define RUNPV_PAE_PT			(_BITUL(11))
+
+#define RUNPV_PAE_PFN_OFFSET	(12)
+
+#define RUNPV_PAE_PHYSICAL_MASK	(~((_BITUL(RUNPV_PAE_PFN_OFFSET) - 1)))
+
+#define runpv_make_pae(pfn, flags) (runpv_pae_t){ .val = (pfn << RUNPV_PAE_PFN_OFFSET) | (flags) }
+#define runpv_pae_to_pfn(pae) (((pae).val & RUNPV_PAE_PHYSICAL_MASK) >> RUNPV_PAE_PFN_OFFSET)
+
+#define runpv_check_pae_pst(pae) ((pae).val & RUNPV_PAE_PST)
+#define runpv_check_pae_pt(pae) ((pae).val & RUNPV_PAE_PT)
+
+struct runpv_page_array {
+	unsigned long gfn_start;
+	unsigned long gfn_size;
+	runpv_pae_t pfn[RUNPV_PAGE_ARRAY_PFN_COUNT];
+	unsigned long shadow_pfn[RUNPV_PAGE_ARRAY_PFN_COUNT][RUNPV_PAGE_ARRAY_SHADOW_COUNT];
+};
+
+#include <linux/spinlock.h>
+
+#define RUNPV_PAGE_BUFFER_PAGE_NR 1024
+struct runpv_page_buffer {
+	spinlock_t lock;
+	unsigned long magic;
+	unsigned long page_head, page_rear;
+	unsigned long free_head, free_rear;
+	unsigned long alloc_pfns[RUNPV_PAGE_BUFFER_PAGE_NR];
+	unsigned long free_pfns[RUNPV_PAGE_BUFFER_PAGE_NR];
+};
+
+#define pv_print(debug_switch, print_func, fmt, ...) \
+	do { \
+		if (debug_switch) \
+			print_func("%s:%d: " fmt, __FILE__, __LINE__, ##__VA_ARGS__); \
+	} while (0)
+
+#define pv_debug(debug_switch, ...) pv_print(debug_switch, pr_debug, __VA_ARGS__)
+#define pv_info(debug_switch, ...) pv_print(debug_switch, pr_info, __VA_ARGS__)
+#define pv_warn(debug_switch, ...) pv_print(debug_switch, pr_warn, __VA_ARGS__)
+#define pv_err(debug_switch, ...) pv_print(debug_switch, pr_err, __VA_ARGS__)
+
+#endif
+
 #endif /* __ASSEMBLY__ */
 
 #endif /* _UAPI_ASM_X86_PVM_PARA_H */
