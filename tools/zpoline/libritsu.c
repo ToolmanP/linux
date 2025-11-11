@@ -1,12 +1,10 @@
 #include "ritsu.h"
-#include <stdio.h>
-#include <assert.h>
 #include <stdlib.h>
 
 typedef long (*syscall_fn_t)(long, long, long, long, long, long, long);
 
 __hidden __thread struct pvm_vcpu_struct pvcs = { 0 };
-static syscall_fn_t call_yui = NULL;
+__hidden static syscall_fn_t call_yui = NULL;
 
 extern long jump_to_yui(long a1, long a2, long a3, long a4, long a5, long a6,
 			long a7);
@@ -38,17 +36,35 @@ static inline int can_direct_nya(long a1, long a2)
 	}
 }
 
+static long tsumugi_no_vmm(long a1, long a2, long a3, long a4, long a5, long a6,
+		    long a7)
+{
+	long ret;
+
+	if (likely(can_direct_nya(a1, a2))) {
+		if (unlikely(!pvcs.yui_entry)) {
+			call_yui(__SYS_PVCS_SET_TLS, (unsigned long)(&pvcs), 0,
+			0, 0, 0, 0);
+    }
+		ret = jump_to_yui(a1, a2, a3, a4, a5, a6, a7);
+	} else {
+		ret = call_yui(a1, a2, a3, a4, a5, a6, a7);
+	}
+	return ret;
+}
+
 static long tsumugi(long a1, long a2, long a3, long a4, long a5, long a6,
 		    long a7)
 {
 	long ret;
 
 	if (likely(can_direct_nya(a1, a2))) {
-		if (unlikely(!pvcs.yui_entry)) 
+		if (unlikely(!pvcs.yui_entry)) {
 			call_yui(__SYS_PVCS_SET_TLS, (unsigned long)(&pvcs), 0,
 			0, 0, 0, 0);
 			call_yui(__SYS_SPLIT_VMM_ENABLE, (unsigned long)(&pvcs), 0,
 			0, 0, 0, 0);
+    }
 		ret = jump_to_yui(a1, a2, a3, a4, a5, a6, a7);
 	} else {
 		ret = call_yui(a1, a2, a3, a4, a5, a6, a7);
@@ -60,6 +76,10 @@ int __hook_init(long placeholder __attribute__((unused)),
 		void *sys_call_hook_ptr)
 {
 	call_yui = *((syscall_fn_t *)sys_call_hook_ptr);
-	*((syscall_fn_t *)sys_call_hook_ptr) = tsumugi;
+  if (getenv("SPLIT_VMM_ENABLE"))
+	  *((syscall_fn_t *)sys_call_hook_ptr) = tsumugi;
+  else
+	  *((syscall_fn_t *)sys_call_hook_ptr) = tsumugi_no_vmm;
+
 	return 0;
 }
