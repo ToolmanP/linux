@@ -4,7 +4,7 @@
 
 #include <linux/const.h>
 
-#ifdef CONFIG_YUI_GUEST
+#ifdef CONFIG_RUNPV_GUEST
 #include <asm/page_types.h>
 #endif
 
@@ -93,11 +93,11 @@
 #define PVM_EVENT_FLAGS_IF_BIT		9
 #define PVM_EVENT_FLAGS_IF		_BITUL(PVM_EVENT_FLAGS_IF_BIT)
 
-#if defined(CONFIG_KVM_AZUCAT) || defined(CONFIG_YUI_GUEST)
-#define AZUCAT_INTR_MASK_IF_BIT 0
-#define AZUCAT_INTR_MASK_IF _BITUL(AZUCAT_INTR_MASK_IF_BIT)
-#define AZUCAT_INTR_MASK_NMI_BIT 1
-#define AZUCAT_INTR_MASK_NMI _BITUL(AZUCAT_INTR_MASK_NMI_BIT)
+#if defined(CONFIG_KVM_RUNPV) || defined(CONFIG_RUNPV_GUEST)
+#define RUNPV_INTR_MASK_IF_BIT 0
+#define RUNPV_INTR_MASK_IF _BITUL(RUNPV_INTR_MASK_IF_BIT)
+#define RUNPV_INTR_MASK_NMI_BIT 1
+#define RUNPV_INTR_MASK_NMI _BITUL(RUNPV_INTR_MASK_NMI_BIT)
 #endif
 
 #define PVM_LOAD_PGTBL_FLAGS_TLB	_BITUL(0)
@@ -136,7 +136,7 @@ struct pvm_vcpu_struct {
 	u64 rsp;
 	u64 rcx;
 	u64 r11;
-#if defined(CONFIG_YUI_GUEST) || defined(CONFIG_KVM_AZUCAT)
+#if defined(CONFIG_RUNPV_GUEST) || defined(CONFIG_KVM_RUNPV)
 	u64 kernel_gsbase;
 	u64 switch_flags; // for switcher to identify whether to be back to host?
 	u64 vm_rflags; // This is the one that really decides the event handling.

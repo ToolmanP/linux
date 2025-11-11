@@ -830,8 +830,6 @@ __SYSCALL(__NR_futex_wait, sys_futex_wait)
 __SYSCALL(__NR_futex_requeue, sys_futex_requeue)
 #define __NR_pvcs_set_tls 457
 __SYSCALL(__NR_pvcs_set_tls, sys_pvcs_set_tls)
-#define __NR_yui_direct 458
-__SYSCALL(__NR_yui_direct, sys_yui_direct)
 #undef __NR_syscalls
 #define __NR_syscalls 459
 

@@ -139,7 +139,7 @@ SYM_INNER_LABEL(entry_SYSCALL_64_switcher_safe_stack, SYM_L_GLOBAL)
 	pushq	%rdi					/* put rdi on ORIG_RAX */
 
 	/* check if it can do direct switch from umod to smod */
-#ifdef  CONFIG_KVM_AZUCAT
+#ifdef  CONFIG_KVM_RUNPV
 	movq TSS_extra(pvcs), %rdi
 	cmpq $0, %rdi
 	je .L_no_pvcs
@@ -169,14 +169,14 @@ SYM_INNER_LABEL(entry_SYSCALL_64_switcher_safe_stack, SYM_L_GLOBAL)
 	movq	%rcx, PVCS_rsp(%rdi)
 
 	/* switch umod to smod (switch_flags & cr3) */
-#ifdef CONFIG_KVM_AZUCAT
+#ifdef CONFIG_KVM_RUNPV
 	xorb	$SWITCH_FLAGS_MOD_TOGGLE, PVCS_switch_flags(%rdi)
 #else
 	xorb	$SWITCH_FLAGS_MOD_TOGGLE, TSS_extra(switch_flags)
 #endif
 
 	/* load smod registers from TSS_extra to sp0 stack or %r11 */
-#ifdef CONFIG_KVM_AZUCAT
+#ifdef CONFIG_KVM_RUNPV
 	movq  PVCS_kernel_rsp(%rdi), %rcx
 #else
 	movq	TSS_extra(smod_rsp), %rcx
@@ -219,7 +219,7 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 
   andq $(~PVM_EVENT_FLAGS_EP), PVCS_event_flags(%rcx)
   andq $(~SWITCH_FLAGS_NMI_WIN), PVCS_switch_flags(%rcx)
-  andq $(~AZUCAT_INTR_MASK_NMI), PVCS_intr_mask(%rcx)
+  andq $(~RUNPV_INTR_MASK_NMI), PVCS_intr_mask(%rcx)
 
   orq   $PVM_EVENT_FLAGS_EF, PVCS_event_flags(%rcx)
 
@@ -264,7 +264,7 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 
   andq $(~PVM_EVENT_FLAGS_EP), PVCS_event_flags(%rcx)
   andq $(~SWITCH_FLAGS_NMI_WIN), PVCS_switch_flags(%rcx)
-  andq $(~AZUCAT_INTR_MASK_NMI), PVCS_intr_mask(%rcx)
+  andq $(~RUNPV_INTR_MASK_NMI), PVCS_intr_mask(%rcx)
 
   testq $X86_EFLAGS_IF, %r11
   jz    .Lswitcher_iret_postlogue_u
@@ -301,7 +301,7 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 	UNWIND_HINT_IRET_REGS offset=8
 
 	/* check if it can do direct switch from smod to umod */
-#ifdef CONFIG_KVM_AZUCAT
+#ifdef CONFIG_KVM_RUNPV
 	testq	$SWITCH_FLAGS_NO_DS_TO_UMOD, %rdi
 #else
 	testq	$SWITCH_FLAGS_NO_DS_TO_UMOD, TSS_extra(switch_flags)
@@ -325,7 +325,7 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 	movq	RSP-ORIG_RAX(%rsp), %rcx
 
 	/* switch smod to umod (switch_flags & cr3) */
-#ifdef	CONFIG_KVM_AZUCAT
+#ifdef	CONFIG_KVM_RUNPV
 	movq  %rcx, PVCS_kernel_rsp(%rdi) // %rcx should be the kernel mode rsp
 	xorb	$SWITCH_FLAGS_MOD_TOGGLE, PVCS_switch_flags(%rdi)
 #else 

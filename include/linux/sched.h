@@ -1544,7 +1544,7 @@ struct task_struct {
 	struct user_event_mm		*user_event_mm;
 #endif
 
-#ifdef CONFIG_YUI_GUEST
+#ifdef CONFIG_RUNPV_GUEST
 	unsigned long pvcs_tls;
 #endif
 

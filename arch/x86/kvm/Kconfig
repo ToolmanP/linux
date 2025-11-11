@@ -128,11 +128,11 @@ config KVM_PVM
 	  will be called kvm-pvm.
 
 
-config KVM_AZUCAT
-	bool "Azucatainer Virtualization"
+config KVM_RUNPV
+	bool "RunpPV ParaVirtualization"
 	depends on KVM_PVM
 	help
-			Provides Azucatainer
+			Provides RUNPV Hypervisor
 
 config KVM_SMM
 	bool "System Management Mode emulation"

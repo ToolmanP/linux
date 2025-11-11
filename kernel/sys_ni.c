@@ -376,4 +376,3 @@ COND_SYSCALL(setuid16);
 COND_SYSCALL(rseq);
 
 COND_SYSCALL(pvcs_set_tls);
-COND_SYSCALL(yui_direct);

@@ -67,7 +67,7 @@ static void pvm_put_vcpu_struct(struct vcpu_pvm *pvm, bool dirty)
 					gpc->gpa >> PAGE_SHIFT);
 }
 
-#ifdef CONFIG_KVM_AZUCAT
+#ifdef CONFIG_KVM_RUNPV
 static bool pvm_get_nmi_mask(struct kvm_vcpu *vcpu)
 {
   struct vcpu_pvm *pvm = to_pvm(vcpu);
@@ -75,7 +75,7 @@ static bool pvm_get_nmi_mask(struct kvm_vcpu *vcpu)
   bool masked;
   if(pvm->msr_vcpu_struct) {
     pvcs = pvm->pvcs_gpc.khva;
-    masked = pvcs->intr_mask & AZUCAT_INTR_MASK_NMI;
+    masked = pvcs->intr_mask & RUNPV_INTR_MASK_NMI;
     return masked;
   } else {
 	  return to_pvm(vcpu)->nmi_mask;
@@ -88,8 +88,8 @@ static void pvm_set_nmi_mask(struct kvm_vcpu *vcpu, bool masked)
   struct pvm_vcpu_struct *pvcs;
   if(pvm->msr_vcpu_struct){
     pvcs = pvm->pvcs_gpc.khva;
-    pvcs->intr_mask &= (~AZUCAT_INTR_MASK_NMI);
-    pvcs->intr_mask |= (masked << AZUCAT_INTR_MASK_NMI_BIT);
+    pvcs->intr_mask &= (~RUNPV_INTR_MASK_NMI);
+    pvcs->intr_mask |= (masked << RUNPV_INTR_MASK_NMI_BIT);
   } else {
 	  to_pvm(vcpu)->nmi_mask = masked;
   }
@@ -109,7 +109,7 @@ static void pvm_set_nmi_mask(struct kvm_vcpu *vcpu, bool masked)
 #endif
 
 
-#ifdef CONFIG_KVM_AZUCAT
+#ifdef CONFIG_KVM_RUNPV
 static u64 __pvm_get_rflags(struct vcpu_pvm *pvm)
 {
 	struct pvm_vcpu_struct *pvcs;
@@ -1382,11 +1382,11 @@ static int pvm_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 			pvm->switch_flags &= ~SWITCH_FLAGS_PVCS_INVALID;
 			if (kvm_gpc_activate(&pvm->pvcs_gpc, data, PAGE_SIZE))
 				kvm_make_request(KVM_REQ_GPC_REFRESH, vcpu);
-#ifdef CONFIG_KVM_AZUCAT
+#ifdef CONFIG_KVM_RUNPV
 			struct pvm_vcpu_struct *pvcs = pvm_get_vcpu_struct(pvm);
 			pvcs->switch_flags = pvm->switch_flags;
 			pvcs->vm_rflags = pvm->rflags;
-      pvcs->intr_mask = pvm->nmi_mask << AZUCAT_INTR_MASK_NMI_BIT;
+      pvcs->intr_mask = pvm->nmi_mask << RUNPV_INTR_MASK_NMI_BIT;
 			pvcs->kernel_rsp = pvm->msr_supervisor_rsp;
 			pvm_put_vcpu_struct(pvm, true);
 #endif
@@ -1806,7 +1806,7 @@ static u32 pvm_get_interrupt_shadow(struct kvm_vcpu *vcpu)
 	if (!pvm->msr_vcpu_struct)
 		return pvm->int_shadow;
 	pvcs = pvm->pvcs_gpc.khva;
-	return (pvcs->intr_mask & AZUCAT_INTR_MASK_IF) | pvm->int_shadow;
+	return (pvcs->intr_mask & RUNPV_INTR_MASK_IF) | pvm->int_shadow;
 }
 
 static void pvm_set_interrupt_shadow(struct kvm_vcpu *vcpu, int mask)
@@ -1910,7 +1910,7 @@ static int handle_synthetic_instruction_return(struct kvm_vcpu *vcpu, bool user)
 	kvm_rsp_write(vcpu, pvcs->rsp);
 	kvm_rcx_write(vcpu, pvcs->rcx);
 	kvm_r11_write(vcpu, pvcs->r11);
-#ifdef CONFIG_KVM_AZUCAT
+#ifdef CONFIG_KVM_RUNPV
 	pvcs->vm_rflags = pvcs->eflags;
 #else
 	pvm->rflags = pvcs->eflags;
@@ -1920,7 +1920,7 @@ static int handle_synthetic_instruction_return(struct kvm_vcpu *vcpu, bool user)
 		pvm->hw_cs = pvcs->user_cs | USER_RPL;
 		pvm->hw_ss = pvcs->user_ss | USER_RPL;
 		pvm_write_guest_gs_base(pvm, pvcs->user_gsbase);
-#ifdef CONFIG_KVM_AZUCAT
+#ifdef CONFIG_KVM_RUNPV
 		pvcs->vm_rflags |= X86_EFLAGS_IF;
 #else
 		pvm->rflags |= X86_EFLAGS_IF;
@@ -2722,7 +2722,7 @@ static noinstr void pvm_vcpu_run_noinstr(struct kvm_vcpu *vcpu)
 	tss_ex->smod_entry = pvm->msr_lstar;
 	tss_ex->smod_gsbase = pvm->msr_kernel_gs_base;
 
-#ifdef CONFIG_KVM_AZUCAT
+#ifdef CONFIG_KVM_RUNPV
 	if (tss_ex->pvcs) {
 		tss_ex->pvcs->switch_flags = pvm->switch_flags;
 		tss_ex->pvcs->kernel_gsbase = pvm->msr_kernel_gs_base;
@@ -2745,7 +2745,7 @@ static noinstr void pvm_vcpu_run_noinstr(struct kvm_vcpu *vcpu)
 	// Get the resulted mode and PVM MSRs which might be changed
 	// when direct switching.
 	//
-#ifdef CONFIG_KVM_AZUCAT
+#ifdef CONFIG_KVM_RUNPV
 	if (tss_ex->pvcs)
 		pvm->switch_flags = tss_ex->pvcs->switch_flags;
 	else
@@ -2889,7 +2889,7 @@ static fastpath_t pvm_vcpu_run(struct kvm_vcpu *vcpu)
 		if (likely(pvm->msr_vcpu_struct)) {
 			pvm_set_nmi_mask(vcpu, !(pvcs->event_flags & PVM_EVENT_FLAGS_EF));
 			rflags |= X86_EFLAGS_IF & pvcs->event_flags;
-#ifdef CONFIG_KVM_AZUCAT
+#ifdef CONFIG_KVM_RUNPV
 			pvcs->vm_rflags = rflags;
 #endif
 		}

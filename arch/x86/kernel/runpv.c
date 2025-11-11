@@ -1,7 +1,7 @@
-#define pr_fmt(fmt) "yui-guest: " fmt
+#define pr_fmt(fmt) "runpv-guest: " fmt
 
 #include <asm/syscall.h>
-#include <asm/yui_para.h>
+#include <asm/runpv_para.h>
 #include <linux/mm_types.h>
 #include <linux/nospec.h>
 #include <linux/sched/debug.h>
@@ -13,16 +13,16 @@
 #include <asm/setup.h>
 #include <asm/traps.h>
 
-void yui_setup_pvcs(int cpu)
+void runpv_setup_pvcs(int cpu)
 {
 	unsigned long kernel_gsbase;
 	kernel_gsbase = cpu_kernelmode_gs_base(cpu);
 	per_cpu_ptr(&pvm_vcpu_struct, cpu)->kernel_gsbase = kernel_gsbase;
 	per_cpu_ptr(&pvm_vcpu_struct, cpu)->yui_entry =
-		(unsigned long)entry_DIRECTCALL_64_yui;
+		(unsigned long)entry_DIRECTCALL_64_runpv;
 }
 
-int yui_remap_pvcs_tls(struct task_struct *p, int dest_cpu)
+int runpv_remap_pvcs_tls(struct task_struct *p, int dest_cpu)
 {
 	struct vm_area_struct *vma;
 	struct mm_struct *mm;
@@ -78,17 +78,12 @@ SYSCALL_DEFINE1(pvcs_set_tls, unsigned long, tls)
 	}
 	current->pvcs_tls = tls; // this is ok for the current task;
 	local_irq_disable(); // we have to make sure that cpu is not changed while we are remapping the TLS
-	yui_remap_pvcs_tls(current, smp_processor_id());
+	runpv_remap_pvcs_tls(current, smp_processor_id());
 	local_irq_enable();
 	return 0;
 }
 
-SYSCALL_DEFINE0(yui_direct)
-{
-	return (long)entry_DIRECTCALL_64_yui;
-}
-
-__visible noinstr bool do_syscall_64_yui(struct pt_regs *regs, int nr)
+__visible noinstr bool do_syscall_64_runpv(struct pt_regs *regs, int nr)
 {
 	do_syscall_64(regs, nr);
 	return true;
