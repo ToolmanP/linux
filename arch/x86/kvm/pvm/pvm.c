@@ -2301,6 +2301,11 @@ static int handle_hc_set_page_offset_base(struct kvm_vcpu *vcpu, unsigned long b
 	return 1;
 }
 
+static int handle_hc_virtio_kick(struct kvm_vcpu *vcpu, unsigned long addr, unsigned long width) {
+  vhost_net_handle_tx(vcpu->kvm->vhost_net);
+  return 1;
+}
+
 static int handle_kvm_hypercall(struct kvm_vcpu *vcpu)
 {
 	int r;
@@ -2361,6 +2366,8 @@ static int handle_exit_syscall(struct kvm_vcpu *vcpu)
 		return handle_hc_sync_free_pages(vcpu->kvm);
 	case PVM_HC_SET_PAGE_OFFSET_BASE:
 		return handle_hc_set_page_offset_base(vcpu, a0);
+  case PVM_HC_VIRTIO_NOTIFY:
+    return handle_hc_virtio_kick(vcpu, a0, a1);
 	default:
 		return handle_kvm_hypercall(vcpu);
 	}

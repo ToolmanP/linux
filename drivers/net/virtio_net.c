@@ -23,6 +23,9 @@
 #include <net/xdp.h>
 #include <net/net_failover.h>
 #include <net/netdev_rx_queue.h>
+#ifdef CONFIG_RUNPV_GUEST
+#include <asm/runpv_para.h>
+#endif
 
 static int napi_weight = NAPI_POLL_WEIGHT;
 module_param(napi_weight, int, 0444);
@@ -476,6 +479,24 @@ static unsigned int mergeable_ctx_to_truesize(void *mrg_ctx)
 {
 	return (unsigned long)mrg_ctx & ((1 << MRG_CTX_HEADER_SHIFT) - 1);
 }
+
+#ifdef CONFIG_RUNPV_GUEST
+static inline bool virtqueue_notify_direct(struct virtqueue *_vq)
+{
+  if(_vq->direct) {
+    pvm_hypercall2(PVM_HC_VIRTIO_NOTIFY, (long)_vq->priv, (long)2);
+    return true;
+  }
+	return false;
+}
+
+#else
+static inline bool virtqueue_notify_direct(struct virtqueue *_vq)
+{
+	return false;
+}
+
+#endif
 
 static struct sk_buff *virtnet_build_skb(void *buf, unsigned int buflen,
 					 unsigned int headroom,
@@ -970,7 +991,7 @@ static int virtnet_xdp_xmit(struct net_device *dev,
 		check_sq_full_and_disable(vi, dev, sq);
 
 	if (flags & XDP_XMIT_FLUSH) {
-		if (virtqueue_kick_prepare(sq->vq) && virtqueue_notify(sq->vq))
+		if (virtqueue_kick_prepare(sq->vq) && (virtqueue_notify_direct(sq->vq) || virtqueue_notify(sq->vq)))
 			kicks = 1;
 	}
 out:
@@ -2371,7 +2392,7 @@ static netdev_tx_t start_xmit(struct sk_buff *skb, struct net_device *dev)
 	check_sq_full_and_disable(vi, dev, sq);
 
 	if (kick || netif_xmit_stopped(txq)) {
-		if (virtqueue_kick_prepare(sq->vq) && virtqueue_notify(sq->vq)) {
+		if (virtqueue_kick_prepare(sq->vq) && (virtqueue_notify_direct(sq->vq) || virtqueue_notify(sq->vq))) {
 			u64_stats_update_begin(&sq->stats.syncp);
 			u64_stats_inc(&sq->stats.kicks);
 			u64_stats_update_end(&sq->stats.syncp);
@@ -4157,8 +4178,10 @@ static int virtnet_find_vqs(struct virtnet_info *vi)
 
 	for (i = 0; i < vi->max_queue_pairs; i++) {
 		vi->rq[i].vq = vqs[rxq2vq(i)];
+    vi->rq[i].vq->direct = true;
 		vi->rq[i].min_buf_len = mergeable_min_buf_len(vi, vi->rq[i].vq);
 		vi->sq[i].vq = vqs[txq2vq(i)];
+    vi->sq[i].vq->direct = true;
 	}
 
 	/* run here: ret == 0. */

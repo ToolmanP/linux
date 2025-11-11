@@ -158,6 +158,9 @@ struct vcpu_pvm {
 
 struct kvm_pvm {
 	struct kvm kvm;
+#if defined(CONFIG_VHOST_NET_MODULE) && defined(CONFIG_KVM_RUNPV)
+  struct vhost_net *vhost_net;
+#endif
 };
 
 static __always_inline struct kvm_pvm *to_kvm_pvm(struct kvm *kvm)
