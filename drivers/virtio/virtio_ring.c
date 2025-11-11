@@ -2079,6 +2079,7 @@ static struct virtqueue *vring_create_virtqueue_packed(
 	vq->vq.name = name;
 	vq->vq.index = index;
 	vq->vq.reset = false;
+  vq->vq.direct = false;
 	vq->we_own_ring = true;
 	vq->notify = notify;
 	vq->weak_barriers = weak_barriers;
@@ -2359,6 +2360,7 @@ EXPORT_SYMBOL_GPL(virtqueue_kick_prepare);
  *
  * Returns false if host notify failed or queue is broken, otherwise true.
  */
+
 bool virtqueue_notify(struct virtqueue *_vq)
 {
 	struct vring_virtqueue *vq = to_vvq(_vq);
@@ -2626,6 +2628,7 @@ static struct virtqueue *__vring_new_virtqueue(unsigned int index,
 	vq->vq.index = index;
 	vq->vq.reset = false;
 	vq->we_own_ring = false;
+  vq->vq.direct = false;
 	vq->notify = notify;
 	vq->weak_barriers = weak_barriers;
 #ifdef CONFIG_VIRTIO_HARDEN_NOTIFICATION

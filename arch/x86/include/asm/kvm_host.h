@@ -36,7 +36,9 @@
 #include <asm/kvm_page_track.h>
 #include <asm/kvm_vcpu_regs.h>
 #include <asm/hyperv-tlfs.h>
-
+#ifdef CONFIG_VHOST_NET_MODULE
+#include <net/vhost_net.h>
+#endif
 #define __KVM_HAVE_ARCH_VCPU_DEBUGFS
 
 /*

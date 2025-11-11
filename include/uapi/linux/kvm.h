@@ -1796,6 +1796,7 @@ struct kvm_pv_cmd {
 /* Per-VM Xen attributes */
 #define KVM_XEN_HVM_GET_ATTR	_IOWR(KVMIO, 0xc8, struct kvm_xen_hvm_attr)
 #define KVM_XEN_HVM_SET_ATTR	_IOW(KVMIO,  0xc9, struct kvm_xen_hvm_attr)
+#define KVM_SET_DIRECT_VHOST_NET _IOW(KVMIO, 0xda, int)
 
 struct kvm_xen_hvm_attr {
 	__u16 type;

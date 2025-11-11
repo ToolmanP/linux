@@ -783,6 +783,9 @@ struct kvm {
 #ifdef CONFIG_HAVE_KVM_IRQFD
 	struct hlist_head irq_ack_notifier_list;
 #endif
+#if defined(CONFIG_VHOST_NET_MODULE) && defined(CONFIG_KVM_RUNPV)
+  struct vhost_net *vhost_net;
+#endif
 
 #if defined(CONFIG_MMU_NOTIFIER) && defined(KVM_ARCH_WANT_MMU_NOTIFIER)
 	struct mmu_notifier mmu_notifier;

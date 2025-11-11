@@ -29,123 +29,15 @@
 #include <linux/if_vlan.h>
 #include <linux/skb_array.h>
 #include <linux/skbuff.h>
+#include <net/vhost_net.h>
 
 #include <net/sock.h>
 #include <net/xdp.h>
-
-#include "vhost.h"
 
 static int experimental_zcopytx = 0;
 module_param(experimental_zcopytx, int, 0444);
 MODULE_PARM_DESC(experimental_zcopytx, "Enable Zero Copy TX;"
 		                       " 1 -Enable; 0 - Disable");
-
-/* Max number of bytes transferred before requeueing the job.
- * Using this limit prevents one virtqueue from starving others. */
-#define VHOST_NET_WEIGHT 0x80000
-
-/* Max number of packets transferred before requeueing the job.
- * Using this limit prevents one virtqueue from starving others with small
- * pkts.
- */
-#define VHOST_NET_PKT_WEIGHT 256
-
-/* MAX number of TX used buffers for outstanding zerocopy */
-#define VHOST_MAX_PEND 128
-#define VHOST_GOODCOPY_LEN 256
-
-/*
- * For transmit, used buffer len is unused; we override it to track buffer
- * status internally; used for zerocopy tx only.
- */
-/* Lower device DMA failed */
-#define VHOST_DMA_FAILED_LEN	((__force __virtio32)3)
-/* Lower device DMA done */
-#define VHOST_DMA_DONE_LEN	((__force __virtio32)2)
-/* Lower device DMA in progress */
-#define VHOST_DMA_IN_PROGRESS	((__force __virtio32)1)
-/* Buffer unused */
-#define VHOST_DMA_CLEAR_LEN	((__force __virtio32)0)
-
-#define VHOST_DMA_IS_DONE(len) ((__force u32)(len) >= (__force u32)VHOST_DMA_DONE_LEN)
-
-enum {
-	VHOST_NET_FEATURES = VHOST_FEATURES |
-			 (1ULL << VHOST_NET_F_VIRTIO_NET_HDR) |
-			 (1ULL << VIRTIO_NET_F_MRG_RXBUF) |
-			 (1ULL << VIRTIO_F_ACCESS_PLATFORM) |
-			 (1ULL << VIRTIO_F_RING_RESET)
-};
-
-enum {
-	VHOST_NET_BACKEND_FEATURES = (1ULL << VHOST_BACKEND_F_IOTLB_MSG_V2)
-};
-
-enum {
-	VHOST_NET_VQ_RX = 0,
-	VHOST_NET_VQ_TX = 1,
-	VHOST_NET_VQ_MAX = 2,
-};
-
-struct vhost_net_ubuf_ref {
-	/* refcount follows semantics similar to kref:
-	 *  0: object is released
-	 *  1: no outstanding ubufs
-	 * >1: outstanding ubufs
-	 */
-	atomic_t refcount;
-	wait_queue_head_t wait;
-	struct vhost_virtqueue *vq;
-};
-
-#define VHOST_NET_BATCH 64
-struct vhost_net_buf {
-	void **queue;
-	int tail;
-	int head;
-};
-
-struct vhost_net_virtqueue {
-	struct vhost_virtqueue vq;
-	size_t vhost_hlen;
-	size_t sock_hlen;
-	/* vhost zerocopy support fields below: */
-	/* last used idx for outstanding DMA zerocopy buffers */
-	int upend_idx;
-	/* For TX, first used idx for DMA done zerocopy buffers
-	 * For RX, number of batched heads
-	 */
-	int done_idx;
-	/* Number of XDP frames batched */
-	int batched_xdp;
-	/* an array of userspace buffers info */
-	struct ubuf_info_msgzc *ubuf_info;
-	/* Reference counting for outstanding ubufs.
-	 * Protected by vq mutex. Writers must also take device mutex. */
-	struct vhost_net_ubuf_ref *ubufs;
-	struct ptr_ring *rx_ring;
-	struct vhost_net_buf rxq;
-	/* Batched XDP buffs */
-	struct xdp_buff *xdp;
-};
-
-struct vhost_net {
-	struct vhost_dev dev;
-	struct vhost_net_virtqueue vqs[VHOST_NET_VQ_MAX];
-	struct vhost_poll poll[VHOST_NET_VQ_MAX];
-	/* Number of TX recently submitted.
-	 * Protected by tx vq lock. */
-	unsigned tx_packets;
-	/* Number of times zerocopy TX recently failed.
-	 * Protected by tx vq lock. */
-	unsigned tx_zcopy_err;
-	/* Flush in progress. Protected by tx vq lock. */
-	bool tx_flush;
-	/* Private page frag */
-	struct page_frag page_frag;
-	/* Refcount bias of page frag */
-	int refcnt_bias;
-};
 
 static unsigned vhost_net_zcopy_mask __read_mostly;
 
@@ -965,7 +857,7 @@ static void handle_tx_zerocopy(struct vhost_net *net, struct socket *sock)
 
 /* Expects to be always run from workqueue - which acts as
  * read-size critical section for our kind of RCU. */
-static void handle_tx(struct vhost_net *net)
+void vhost_net_handle_tx(struct vhost_net *net)
 {
 	struct vhost_net_virtqueue *nvq = &net->vqs[VHOST_NET_VQ_TX];
 	struct vhost_virtqueue *vq = &nvq->vq;
@@ -990,6 +882,7 @@ static void handle_tx(struct vhost_net *net)
 out:
 	mutex_unlock(&vq->mutex);
 }
+EXPORT_SYMBOL(vhost_net_handle_tx);
 
 static int peek_head_len(struct vhost_net_virtqueue *rvq, struct sock *sk)
 {
@@ -1112,7 +1005,7 @@ err:
 
 /* Expects to be always run from workqueue - which acts as
  * read-size critical section for our kind of RCU. */
-static void handle_rx(struct vhost_net *net)
+void vhost_net_handle_rx(struct vhost_net *net)
 {
 	struct vhost_net_virtqueue *nvq = &net->vqs[VHOST_NET_VQ_RX];
 	struct vhost_virtqueue *vq = &nvq->vq;
@@ -1257,37 +1150,38 @@ out:
 	vhost_net_signal_used(nvq);
 	mutex_unlock(&vq->mutex);
 }
+EXPORT_SYMBOL(vhost_net_handle_rx);
 
-static void handle_tx_kick(struct vhost_work *work)
+void vhost_net_handle_tx_kick(struct vhost_work *work)
 {
 	struct vhost_virtqueue *vq = container_of(work, struct vhost_virtqueue,
 						  poll.work);
 	struct vhost_net *net = container_of(vq->dev, struct vhost_net, dev);
 
-	handle_tx(net);
+	vhost_net_handle_tx(net);
 }
 
-static void handle_rx_kick(struct vhost_work *work)
+void vhost_net_handle_rx_kick(struct vhost_work *work)
 {
 	struct vhost_virtqueue *vq = container_of(work, struct vhost_virtqueue,
 						  poll.work);
 	struct vhost_net *net = container_of(vq->dev, struct vhost_net, dev);
 
-	handle_rx(net);
+	vhost_net_handle_rx(net);
 }
 
-static void handle_tx_net(struct vhost_work *work)
+static void vhost_net_handle_tx_net(struct vhost_work *work)
 {
 	struct vhost_net *net = container_of(work, struct vhost_net,
 					     poll[VHOST_NET_VQ_TX].work);
-	handle_tx(net);
+	vhost_net_handle_tx(net);
 }
 
-static void handle_rx_net(struct vhost_work *work)
+void vhost_net_handle_rx_net(struct vhost_work *work)
 {
 	struct vhost_net *net = container_of(work, struct vhost_net,
 					     poll[VHOST_NET_VQ_RX].work);
-	handle_rx(net);
+	vhost_net_handle_rx(net);
 }
 
 static int vhost_net_open(struct inode *inode, struct file *f)
@@ -1329,8 +1223,8 @@ static int vhost_net_open(struct inode *inode, struct file *f)
 	dev = &n->dev;
 	vqs[VHOST_NET_VQ_TX] = &n->vqs[VHOST_NET_VQ_TX].vq;
 	vqs[VHOST_NET_VQ_RX] = &n->vqs[VHOST_NET_VQ_RX].vq;
-	n->vqs[VHOST_NET_VQ_TX].vq.handle_kick = handle_tx_kick;
-	n->vqs[VHOST_NET_VQ_RX].vq.handle_kick = handle_rx_kick;
+	n->vqs[VHOST_NET_VQ_TX].vq.handle_kick = vhost_net_handle_tx_kick;
+	n->vqs[VHOST_NET_VQ_RX].vq.handle_kick = vhost_net_handle_rx_kick;
 	for (i = 0; i < VHOST_NET_VQ_MAX; i++) {
 		n->vqs[i].ubufs = NULL;
 		n->vqs[i].ubuf_info = NULL;
@@ -1347,12 +1241,13 @@ static int vhost_net_open(struct inode *inode, struct file *f)
 		       VHOST_NET_PKT_WEIGHT, VHOST_NET_WEIGHT, true,
 		       NULL);
 
-	vhost_poll_init(n->poll + VHOST_NET_VQ_TX, handle_tx_net, EPOLLOUT, dev,
-			vqs[VHOST_NET_VQ_TX]);
-	vhost_poll_init(n->poll + VHOST_NET_VQ_RX, handle_rx_net, EPOLLIN, dev,
-			vqs[VHOST_NET_VQ_RX]);
+	vhost_poll_init(n->poll + VHOST_NET_VQ_TX, vhost_net_handle_tx_net,
+			EPOLLOUT, dev, vqs[VHOST_NET_VQ_TX]);
+	vhost_poll_init(n->poll + VHOST_NET_VQ_RX, vhost_net_handle_rx_net, EPOLLIN,
+			dev, vqs[VHOST_NET_VQ_RX]);
 
 	f->private_data = n;
+  
 	n->page_frag.page = NULL;
 	n->refcnt_bias = 0;
 

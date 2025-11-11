@@ -4783,6 +4783,14 @@ static int kvm_vm_ioctl_get_stats_fd(struct kvm *kvm)
 	return fd;
 }
 
+static int kvm_vm_ioctl_set_direct_vhost_net(struct kvm *kvm, int fd){
+  struct file *f = fget(fd);
+  if(!f) 
+    return -ENODEV;
+  kvm->vhost_net = f->private_data;
+  return 0;
+}
+
 static long kvm_vm_ioctl(struct file *filp,
 			   unsigned int ioctl, unsigned long arg)
 {
@@ -4968,6 +4976,11 @@ static long kvm_vm_ioctl(struct file *filp,
 	case KVM_GET_STATS_FD:
 		r = kvm_vm_ioctl_get_stats_fd(kvm);
 		break;
+  case KVM_SET_DIRECT_VHOST_NET: {
+      int vhost_net_fd = (int)(long)argp;
+      r = kvm_vm_ioctl_set_direct_vhost_net(kvm, vhost_net_fd);
+      break;
+  }
 	default:
 		r = kvm_arch_vm_ioctl(filp, ioctl, arg);
 	}
@@ -5405,7 +5418,7 @@ static int kvm_io_bus_sort_cmp(const void *p1, const void *p2)
 	return kvm_io_bus_cmp(p1, p2);
 }
 
-static int kvm_io_bus_get_first_dev(struct kvm_io_bus *bus,
+int kvm_io_bus_get_first_dev(struct kvm_io_bus *bus,
 			     gpa_t addr, int len)
 {
 	struct kvm_io_range *range, key;
@@ -5448,6 +5461,30 @@ static int __kvm_io_bus_write(struct kvm_vcpu *vcpu, struct kvm_io_bus *bus,
 
 	return -EOPNOTSUPP;
 }
+
+int kvm_mmio_get_first_dev(struct kvm_vcpu *vcpu, gpa_t addr, int len, struct kvm_io_device **out) {
+	struct kvm_io_bus *bus;
+	struct kvm_io_range range;
+  int idx;
+
+	range = (struct kvm_io_range) {
+		.addr = addr,
+		.len = len,
+	};
+
+
+	bus = srcu_dereference(vcpu->kvm->buses[KVM_MMIO_BUS], &vcpu->kvm->srcu);
+	if (!bus)
+		return -ENOMEM;
+
+	idx = kvm_io_bus_get_first_dev(bus, range.addr, range.len);
+  if (idx >= 0) {
+    *out = bus->range[idx].dev;
+  }
+  return idx < 0 ? idx : 0;
+}
+
+EXPORT_SYMBOL_GPL(kvm_mmio_get_first_dev);
 
 /* kvm_io_bus_write - called under kvm->slots_lock */
 int kvm_io_bus_write(struct kvm_vcpu *vcpu, enum kvm_bus bus_idx, gpa_t addr,
