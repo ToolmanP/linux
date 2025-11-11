@@ -31,12 +31,14 @@
 
 #define RUNPV_HC_DEBUG 0
 
-static inline void runpv_mmu_write_lock(void)
+static inline long runpv_mmu_write_trylock(void)
 {
 	unsigned long mmu_lock_ptr = this_cpu_read(cpu_tss_rw.tss_ex.mmu_lock_ptr);
 	if (!mmu_lock_ptr)
-		return;
-	write_lock((rwlock_t *)mmu_lock_ptr);
+		return -EINVAL;
+	if (do_raw_write_trylock((rwlock_t *)mmu_lock_ptr))
+		return 0;
+	return -EAGAIN;
 }
 
 static inline void runpv_mmu_write_unlock(void)
@@ -44,7 +46,7 @@ static inline void runpv_mmu_write_unlock(void)
 	unsigned long mmu_lock_ptr = this_cpu_read(cpu_tss_rw.tss_ex.mmu_lock_ptr);
 	if (!mmu_lock_ptr)
 		return;
-	write_unlock((rwlock_t *)mmu_lock_ptr);
+	do_raw_write_unlock((rwlock_t *)mmu_lock_ptr);
 }
 
 long runpv_hc_handle_set_pte(long ptep, long pte) {
@@ -58,7 +60,10 @@ long runpv_hc_handle_set_pte(long ptep, long pte) {
 	pv_info(RUNPV_HC_DEBUG, "ptep: %#lx, pte: %#lx\n", ptep, pte);
 	pv_info(RUNPV_HC_DEBUG, "current_cr3: %#lx, kernel_cr3: %#lx, user_cr3: %#lx\n", current_cr3, kernel_cr3, user_cr3);
 
-	runpv_mmu_write_lock();
+	ret = runpv_mmu_write_trylock();
+	if (ret < 0) {
+		return ret;
+	}
 
 	struct runpv_page_array *page_array = (struct runpv_page_array *)this_cpu_read(cpu_tss_rw.tss_ex.page_array_base);
 	unsigned long gfn = (pte & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT;
@@ -105,7 +110,10 @@ long runpv_hc_handle_bind_host_page(unsigned long gfn, int order, unsigned long 
 	int actual_level;
 	int ret;
 
-	runpv_mmu_write_lock();
+	ret = runpv_mmu_write_trylock();
+	if (ret < 0) {
+		return ret;
+	}
 
 	kernel_cr3 = this_cpu_read(cpu_tss_rw.tss_ex.smod_cr3);
 	ret = pw_walk_address(kva, kernel_cr3, PW_LEVEL_PTE, &entry_ptr, &actual_level);
@@ -146,7 +154,10 @@ long runpv_hc_handle_unbind_host_page(unsigned long gfn, unsigned long kva)
 	int actual_level;
 	int ret;
 
-	runpv_mmu_write_lock();
+	ret = runpv_mmu_write_trylock();
+	if (ret < 0) {
+		return ret;
+	}
 
 	ret = pw_walk_address(kva, kernel_cr3, PW_LEVEL_PTE, &entry_ptr, &actual_level);
 	if (ret < 0 || actual_level != PW_LEVEL_PTE) {
@@ -183,7 +194,10 @@ long runpv_hc_handle_mark_page_pt(unsigned long gfn, unsigned long kva, bool mar
 	struct runpv_page_array *page_array = (struct runpv_page_array *)this_cpu_read(cpu_tss_rw.tss_ex.page_array_base);
 	int ret = 0;
 
-	runpv_mmu_write_lock();
+	ret = runpv_mmu_write_trylock();
+	if (ret < 0) {
+		return ret;
+	}
 
 	if (mark) {
 		unsigned long kernel_cr3 = this_cpu_read(cpu_tss_rw.tss_ex.smod_cr3);

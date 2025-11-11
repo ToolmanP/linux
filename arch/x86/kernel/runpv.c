@@ -107,31 +107,39 @@ static inline int pte_is_host_page_normal(pte_t pte)
 	return 1;
 }
 
-static inline long runpv_hc_set_pte(pte_t *ptep, pte_t pte)
+static inline int runpv_hc_set_pte(pte_t *ptep, pte_t pte)
 {
-	long ret = runpv_hypercall2(RUNPV_HC_SET_PTE, (long)ptep, (long)pte.pte);
-	if (ret == -ENODATA) {
-		pvm_hypercall0(PVM_HC_SYNC_PAGES);
+	for (;;) {
+		long ret = runpv_hypercall2(RUNPV_HC_SET_PTE, (long)ptep, (long)pte.pte);
+		if (ret == -EAGAIN) {
+			continue;
+		} else {
+			return (int)ret;
+		}
 	}
-	return ret;
 }
 
-static inline int runpv_hc_bind_host_page(long gfn, int order, long page)
+static inline int runpv_hc_bind_host_page(long gfn, int order, unsigned long page)
 {
 	for (;;) {
 		long ret = runpv_hypercall3(RUNPV_HC_BIND_HOST_PAGE, gfn, order, page);
-		if (ret == -ENODATA) {
+		if (ret == -EAGAIN) {
+			continue;
+		} else if (ret == -ENODATA) {
 			pvm_hypercall0(PVM_HC_SYNC_PAGES);
 		} else {
 			return (int)ret;
 		}
 	}
 }
+
 static inline int runpv_hc_unbind_host_page(long gfn, unsigned long page)
 {
 	for (;;) {
-	long ret = runpv_hypercall2(RUNPV_HC_UNBIND_HOST_PAGE, gfn, page);
-		if (ret == -ENODATA) {
+		long ret = runpv_hypercall2(RUNPV_HC_UNBIND_HOST_PAGE, gfn, page);
+		if (ret == -EAGAIN) {
+			continue;
+		} else if (ret == -ENODATA) {
 			pvm_hypercall0(PVM_HC_SYNC_FREE_PAGES);
 		} else {
 			return (int)ret;
@@ -141,8 +149,15 @@ static inline int runpv_hc_unbind_host_page(long gfn, unsigned long page)
 
 static inline int runpv_hc_mark_page_pt(long gfn, unsigned long page, int mark)
 {
-	long ret = runpv_hypercall3(RUNPV_HC_MARK_PAGE_PT, gfn, page, mark);
-	return (int)ret;
+	long ret;
+	for (;;) {
+		ret = runpv_hypercall3(RUNPV_HC_MARK_PAGE_PT, gfn, page, mark);
+		if (ret == -EAGAIN) {
+			continue;
+		} else {
+			return (int)ret;
+		}
+	}
 }
 
 static int split_vmm_enable = 0;
@@ -190,7 +205,7 @@ EXPORT_SYMBOL(runpv_free_page_hook);
 
 static int runpv_try_set_pte(pte_t *pte, pte_t entry)
 {
-	long ret;
+	int ret;
 	if (!split_vmm_enable) return -1;
 	if (!pte_is_host_page_normal(*pte)) return -1;
 	if (!pte_is_host_page_normal(entry)) return -1;
