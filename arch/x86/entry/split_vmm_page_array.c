@@ -72,11 +72,6 @@ static inline void unmark_page_pt(struct runpv_page_array_slot *slot, unsigned l
 
 static inline void mark_page_pt_shadow_pfn(struct runpv_page_array_slot *slot, unsigned long gfn, unsigned long shadow_pfn)
 {
-	runpv_pae_t *pae = &slot->entries[gfn - slot->gfn_start].pfn;
-	if (!runpv_check_pae_pst(*pae)) {
-		return;
-	}
-	BUG_ON(!runpv_check_pae_pt(*pae));
 	pv_info(PAGE_ARRAY_DEBUG, "mark gfn %#lx as page table shadow pfn %#lx\n", gfn, shadow_pfn);
 	unsigned long *shadow_pfn_array = slot->entries[gfn - slot->gfn_start].shadow_pfn;
 	for (int i = 0; i < RUNPV_PAGE_ARRAY_SHADOW_COUNT; i++) {

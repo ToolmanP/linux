@@ -183,6 +183,7 @@ long runpv_hc_handle_unbind_host_page(unsigned long gfn, unsigned long kva)
 	BUG_ON(check_shadow_present(*(pte_t *)entry_ptr));
 	pv_info(RUNPV_HC_DEBUG, "PVM: set pte %#lx from %#lx to 0 kva %#lx\n", entry_ptr, *(pte_t *)entry_ptr, kva);
 	WRITE_ONCE(*(pte_t *)entry_ptr, __pte(0));
+	flush_tlb_one_kernel(kva);
 
 out_unlock:
 	runpv_mmu_write_unlock();

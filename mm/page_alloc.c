@@ -1535,7 +1535,7 @@ inline void post_alloc_hook(struct page *page, unsigned int order,
 	}
 
 	// If the page is a kernel page table, initialize it to trigger shadow paging.
-	if (init && (gfp_flags & __GFP_PT))
+	if (gfp_flags & __GFP_PT)
 		kernel_init_pages(page, 1 << order);
 
 	runpv_alloc_page_hook(page, order, gfp_flags);
