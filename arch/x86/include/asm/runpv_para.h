@@ -14,8 +14,6 @@ void runpv_setup_pvcs(int cpu);
 int runpv_remap_pvcs_tls(struct task_struct *p, int dest_cpu);
 void entry_DIRECTCALL_64_runpv(void);
 
-void runpv_free_page_hook(struct page *page, unsigned int order);
-void runpv_alloc_page_hook(struct page *page, unsigned int order, gfp_t gfp_flags);
 
 static inline long runpv_hypercall3(long nr, long a0, long a1, long a2)
 {
@@ -49,6 +47,7 @@ static inline long runpv_hypercall0(long nr)
 void __init runpv_early_setup(void);
 
 #else
+
 static inline void runpv_setup_pvcs(int cpu) { }
 
 static inline void runpv_early_setup(void) {
@@ -59,6 +58,13 @@ static inline int runpv_remap_pvcs_tls(struct task_struct *p, int dest_cpu) {
   return 0;
 }
 
+
+#endif
+
+#ifdef CONFIG_RUNPV_MEM_PARAVIRT
+void runpv_free_page_hook(struct page *page, unsigned int order);
+void runpv_alloc_page_hook(struct page *page, unsigned int order, gfp_t gfp_flags);
+#else
 static inline void runpv_free_page_hook(struct page *page, unsigned int order) {
 
 }
@@ -66,7 +72,6 @@ static inline void runpv_free_page_hook(struct page *page, unsigned int order) {
 static inline void runpv_alloc_page_hook(struct page *page, unsigned int order, gfp_t gfp_flags){
 
 }
-
 #endif
 
 #endif

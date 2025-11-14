@@ -480,7 +480,7 @@ static unsigned int mergeable_ctx_to_truesize(void *mrg_ctx)
 	return (unsigned long)mrg_ctx & ((1 << MRG_CTX_HEADER_SHIFT) - 1);
 }
 
-#ifdef CONFIG_RUNPV_GUEST
+#ifdef CONFIG_RUNPV_VIRTIO_NET_PARAVIRT
 static inline bool virtqueue_notify_direct(struct virtqueue *_vq)
 {
   if(_vq->direct) {

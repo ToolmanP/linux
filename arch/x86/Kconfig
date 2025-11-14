@@ -871,6 +871,22 @@ config RUNPV_GUEST
 		hypervisor. RunPV is a lightweight guest kernel that is designed to provide
 		full-fleged kernel functionality while being small, elastic and fast.
 
+config RUNPV_MEM_PARAVIRT
+  bool "RunPV: Mem Paravirt Support"
+  depends on RUNPV_GUEST
+  default n
+  help
+    This option enables runpv guest to use paravirtualized co-host page allocator.
+    This bypass current shadow page table design and enables host to directly map guest's pages.
+
+config RUNPV_VIRTIO_NET_PARAVIRT
+  bool "RunPV: Direct Virtio-net Support"
+  depends on RUNPV_GUEST
+  default n
+  help
+    This option enables runpv guest to use paravirtualized virtio-net.
+    This bypasses host's eventfd subsystem and uses VCPU-thread for packet handling.
+
 config ARCH_CPUIDLE_HALTPOLL
 	def_bool n
 	prompt "Disable host haltpoll when loading haltpoll driver"

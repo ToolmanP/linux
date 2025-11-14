@@ -93,6 +93,7 @@ __visible noinstr bool do_syscall_64_runpv(struct pt_regs *regs, int nr)
 	return true;
 }
 
+#ifdef CONFIG_RUNPV_MEM_PARAVIRT
 #define HOST_PAGE_NONE		(0)
 #define HOST_PAGE_NORMAL	(1)
 #define HOST_PAGE_PT		(2)
@@ -162,8 +163,6 @@ static inline int runpv_hc_mark_page_pt(long gfn, unsigned long page, int mark)
 
 static int split_vmm_enable = 0;
 
-#include <linux/syscalls.h>
-
 SYSCALL_DEFINE0(split_vmm_enable)
 {
 	split_vmm_enable = 1;
@@ -188,6 +187,7 @@ void runpv_alloc_page_hook(struct page *page, unsigned int order, gfp_t gfp_flag
 		}
 	}
 }
+
 EXPORT_SYMBOL(runpv_alloc_page_hook);
 
 void runpv_free_page_hook(struct page *page, unsigned int order)
@@ -202,6 +202,7 @@ void runpv_free_page_hook(struct page *page, unsigned int order)
 	}
 }
 EXPORT_SYMBOL(runpv_free_page_hook);
+
 
 static int runpv_try_set_pte(pte_t *pte, pte_t entry)
 {
@@ -239,29 +240,39 @@ static void runpv_set_p4d(p4d_t *p4dp, p4d_t p4dval)
 	native_set_p4d(p4dp, p4dval);
 }
 
+#endif
+
 static void runpv_flush_tlb_user(void)
 {
+#ifdef CONFIG_RUNPV_MEM_PARAVIRT
 	runpv_hypercall0(RUNPV_HC_TLB_FLUSH_CURRENT);
+#endif
 	pvm_hypercall0(PVM_HC_TLB_FLUSH_CURRENT);
 }
 
 static void runpv_flush_tlb_kernel(void)
 {
+#ifdef CONFIG_RUNPV_MEM_PARAVIRT
 	runpv_hypercall0(RUNPV_HC_TLB_FLUSH);
+#endif
 	pvm_hypercall0(PVM_HC_TLB_FLUSH);
 }
 
 static void runpv_flush_tlb_one_user(unsigned long addr)
 {
+#ifdef CONFIG_RUNPV_MEM_PARAVIRT
 	runpv_hypercall1(RUNPV_HC_TLB_INVLPG, addr);
+#endif
 	pvm_hypercall1(PVM_HC_TLB_INVLPG, addr);
 }
 
 void __init runpv_early_setup(void){
+#ifdef CONFIG_RUNPV_MEM_PARAVIRT
 	pv_ops.mmu.set_pte = runpv_set_pte;
 	pv_ops.mmu.set_pmd = runpv_set_pmd;
 	pv_ops.mmu.set_pud = runpv_set_pud;
 	pv_ops.mmu.set_p4d = runpv_set_p4d;
+#endif
 	pv_ops.mmu.flush_tlb_user = runpv_flush_tlb_user;
 	pv_ops.mmu.flush_tlb_kernel = runpv_flush_tlb_kernel;
 	pv_ops.mmu.flush_tlb_one_user = runpv_flush_tlb_one_user;
