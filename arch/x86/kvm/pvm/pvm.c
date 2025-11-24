@@ -899,7 +899,7 @@ static bool check_switch_cr3(struct vcpu_pvm *pvm, u64 switch_host_cr3)
 	return true;
 }
 
-static void pvm_pgtbl_preload_for_guest_with_host_pcid(struct vcpu_pvm *pvm, u64 *switch_host_cr3)
+static __maybe_unused void pvm_pgtbl_preload_for_guest_with_host_pcid(struct vcpu_pvm *pvm, u64 *switch_host_cr3)
 {
 	u32 host_pcid;
 	u64 hw_cr3;
@@ -926,25 +926,11 @@ static void pvm_set_host_cr3_for_guest_with_host_pcid(struct vcpu_pvm *pvm)
 	bool flush = false;
 	u32 host_pcid = host_pcid_get(pvm, root_hpa, &flush);
 	u64 hw_cr3 = root_hpa | host_pcid;
-	u64 switch_host_cr3;
-
 	if (!flush)
 		hw_cr3 |= CR3_NOFLUSH;
 	this_cpu_write(cpu_tss_rw.tss_ex.enter_cr3, hw_cr3);
-
-	if (is_smod(pvm)) {
-		this_cpu_write(cpu_tss_rw.tss_ex.smod_cr3, hw_cr3 | CR3_NOFLUSH);
-		switch_host_cr3 = this_cpu_read(cpu_tss_rw.tss_ex.umod_cr3);
-		pvm_pgtbl_preload_for_guest_with_host_pcid(pvm, &switch_host_cr3);
-	} else {
-		this_cpu_write(cpu_tss_rw.tss_ex.umod_cr3, hw_cr3 | CR3_NOFLUSH);
-		switch_host_cr3 = this_cpu_read(cpu_tss_rw.tss_ex.smod_cr3);
-	}
-
-	if (check_switch_cr3(pvm, switch_host_cr3))
-		pvm->switch_flags &= ~SWITCH_FLAGS_NO_DS_CR3;
-	else
-		pvm->switch_flags |= SWITCH_FLAGS_NO_DS_CR3;
+	this_cpu_write(cpu_tss_rw.tss_ex.smod_cr3, hw_cr3);
+  this_cpu_write(cpu_tss_rw.tss_ex.umod_cr3, hw_cr3);
 }
 
 static void pvm_set_host_cr3_for_guest_without_host_pcid(struct vcpu_pvm *pvm)
