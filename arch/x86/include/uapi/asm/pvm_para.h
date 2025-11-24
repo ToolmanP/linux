@@ -3,10 +3,7 @@
 #define _UAPI_ASM_X86_PVM_PARA_H
 
 #include <linux/const.h>
-
-#ifdef CONFIG_RUNPV_GUEST
 #include <asm/page_types.h>
-#endif
 
 /*
  * The CPUID instruction in PVM guest can't be trapped and emulated,
@@ -108,18 +105,16 @@
 #define PVM_EVENT_FLAGS_IF_BIT		9
 #define PVM_EVENT_FLAGS_IF		_BITUL(PVM_EVENT_FLAGS_IF_BIT)
 
-#if defined(CONFIG_KVM_RUNPV) || defined(CONFIG_RUNPV_GUEST)
 #define RUNPV_INTR_MASK_IF_BIT 0
 #define RUNPV_INTR_MASK_IF _BITUL(RUNPV_INTR_MASK_IF_BIT)
 #define RUNPV_INTR_MASK_NMI_BIT 1
 #define RUNPV_INTR_MASK_NMI _BITUL(RUNPV_INTR_MASK_NMI_BIT)
-#endif
 
 #define PVM_LOAD_PGTBL_FLAGS_TLB	_BITUL(0)
 #define PVM_LOAD_PGTBL_FLAGS_LA57	_BITUL(1)
 
 #ifndef __ASSEMBLY__
-
+#include <linux/spinlock.h>
 /*
  * PVM event delivery saves the information about the event and the old context
  * into the PVCS structure if the event is from user mode or from supervisor
@@ -151,7 +146,6 @@ struct pvm_vcpu_struct {
 	u64 rsp;
 	u64 rcx;
 	u64 r11;
-#if defined(CONFIG_RUNPV_GUEST) || defined(CONFIG_KVM_RUNPV)
 	u64 kernel_gsbase;
 	u64 switch_flags; // for switcher to identify whether to be back to host?
 	u64 vm_rflags; // This is the one that really decides the event handling.
@@ -160,11 +154,7 @@ struct pvm_vcpu_struct {
 	u64 intr_mask;
 	u64 yui_entry;
 } __aligned(PAGE_SIZE);
-#else
-};
-#endif
 
-#if defined(CONFIG_RUNPV_GUEST) || defined(CONFIG_KVM_RUNPV)
 #define RUNPV_PAGE_ARRAY_SHADOW_COUNT	(16)
 #define RUNPV_PAGE_ARRAY_SLOT_NR (64)
 
@@ -204,9 +194,9 @@ struct runpv_page_array {
 	struct runpv_page_array_slot *slots[RUNPV_PAGE_ARRAY_SLOT_NR];
 };
 
-#include <linux/spinlock.h>
 
 #define RUNPV_PAGE_BUFFER_PAGE_NR 1024
+
 struct runpv_page_buffer {
 	spinlock_t lock;
 	unsigned long magic;
@@ -227,7 +217,6 @@ struct runpv_page_buffer {
 #define pv_warn(debug_switch, ...) pv_print(debug_switch, pr_warn, __VA_ARGS__)
 #define pv_err(debug_switch, ...) pv_print(debug_switch, pr_err, __VA_ARGS__)
 
-#endif
 #endif /* __ASSEMBLY__ */
 
 #endif /* _UAPI_ASM_X86_PVM_PARA_H */
