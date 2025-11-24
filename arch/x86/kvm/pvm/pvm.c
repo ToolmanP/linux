@@ -13,6 +13,10 @@
 
 #include <linux/module.h>
 #include <linux/entry-kvm.h>
+#include <linux/mman.h>
+#include "../mmu/mmu_internal.h"
+#include "../mmu/spte.h"
+#include <linux/kvm_host.h>
 
 #include <asm/gsseg.h>
 #include <asm/io_bitmap.h>
@@ -2297,6 +2301,7 @@ static int handle_hc_sync_free_pages(struct kvm *kvm)
 
 static int handle_hc_set_page_offset_base(struct kvm_vcpu *vcpu, unsigned long base)
 {
+	pr_info("%s: set page offset base to %#lx\n", __func__, base);
 	vcpu->kvm->page_offset_base = base;
 	return 1;
 }
@@ -2304,6 +2309,128 @@ static int handle_hc_set_page_offset_base(struct kvm_vcpu *vcpu, unsigned long b
 static int handle_hc_virtio_kick(struct kvm_vcpu *vcpu, unsigned long addr, unsigned long width) {
   vhost_net_handle_tx(vcpu->kvm->vhost_net);
   return 1;
+}
+
+extern int runpv_faultin_direct_mapping(
+	struct kvm_vcpu *vcpu,
+	unsigned long gfn,
+	unsigned long pfn
+);
+
+#define RUNPV_BATCHED_PAGES_MAX_NR 128
+
+static inline unsigned int __alloc_from_buddy(struct kvm_vcpu *vcpu, unsigned long gfns_gva, unsigned long orders_gva, unsigned long nr_pages)
+{
+	unsigned long gfns[nr_pages];
+	unsigned int orders[nr_pages];
+	unsigned long i, j;
+	struct x86_exception exception;
+	int r;
+	unsigned int page_count = 0;
+
+	r = kvm_read_guest_virt(vcpu, gfns_gva, gfns, nr_pages * sizeof(unsigned long), &exception);
+	BUG_ON(r != X86EMUL_CONTINUE);
+	r = kvm_read_guest_virt(vcpu, orders_gva, orders, nr_pages * sizeof(unsigned int), &exception);
+	BUG_ON(r != X86EMUL_CONTINUE);
+
+	// for (int i = 0; i < nr_pages; i++) {
+	// 	pr_info("%s: gfn %#lx, order %d\n", __func__, gfns[i], orders[i]);
+	// }
+
+	for (i = 0; i < nr_pages; i++) {
+		page_count += (1 << orders[i]);
+		for (j = 0; j < (1 << orders[i]); j++) {
+			unsigned long gfn = gfns[i] + j;
+			// unsigned long pfn = kvm_vcpu_gfn_to_pfn(vcpu, gfn);
+			kvm_pfn_t pfn = gfn_to_pfn(vcpu->kvm, gfn);
+			BUG_ON(is_error_noslot_pfn(pfn));
+			// pr_err("bind host page: gfn %#lx, pfn %#lx, order %d\n", gfn, pfn, orders[i]);
+			// extern void runpv_bind_host_page(struct runpv_page_array *page_array, unsigned long gfn, unsigned long pfn);
+			// runpv_bind_host_page((struct runpv_page_array *)vcpu->kvm->page_array_base, gfn, pfn);
+			kvm_release_pfn_clean(pfn);
+			r = runpv_faultin_direct_mapping(vcpu, gfn, pfn);
+			if (r != RET_PF_FIXED && r != RET_PF_SPURIOUS) {
+				// pr_info("r %d\n", r);
+			}
+		}
+	}
+	return page_count;
+}
+
+static unsigned int handle_hc_alloc_from_buddy(struct kvm_vcpu *vcpu, unsigned long gfns_gva, unsigned long orders_gva, unsigned long nr_pages) {
+	unsigned long index;
+	unsigned int count = 0;
+	for (index = 0; index < nr_pages; index += RUNPV_BATCHED_PAGES_MAX_NR) {
+		unsigned long cur_gfns_gva = gfns_gva + index * sizeof(unsigned long);
+		unsigned long cur_orders_gva = orders_gva + index * sizeof(unsigned int);
+		unsigned long cur_nr_pages = min(nr_pages - index, RUNPV_BATCHED_PAGES_MAX_NR);
+		count += __alloc_from_buddy(vcpu, cur_gfns_gva, cur_orders_gva, cur_nr_pages);
+	}
+	// pr_info("%s: alloc %u pages from buddy\n", __func__, count);
+	return 1;
+}
+
+static inline unsigned int __free_to_buddy(struct kvm_vcpu *vcpu, unsigned long gfns_gva, unsigned long orders_gva, unsigned long nr_pages)
+{
+	unsigned long gfns[nr_pages];
+	unsigned int orders[nr_pages];
+	unsigned long i;
+	struct x86_exception exception;
+	int r;
+	unsigned int page_count = 0;
+
+	r = kvm_read_guest_virt(vcpu, gfns_gva, gfns, nr_pages * sizeof(unsigned long), &exception);
+	BUG_ON(r != X86EMUL_CONTINUE);
+	r = kvm_read_guest_virt(vcpu, orders_gva, orders, nr_pages * sizeof(unsigned int), &exception);
+	BUG_ON(r != X86EMUL_CONTINUE);
+
+	for (i = 0; i < nr_pages; i++) {
+		page_count += (1 << orders[i]);
+		unsigned long gfn = gfns[i];
+		unsigned long hva = kvm_vcpu_gfn_to_hva(vcpu, gfn);
+		BUG_ON(kvm_is_error_hva(hva));
+		r = do_madvise(vcpu->kvm->mm, hva, PAGE_SIZE << orders[i], MADV_DONTNEED);
+		if (r < 0) {
+			WARN("do_madvise failed: gfn %#lx, order %d, error %d\n", gfn, orders[i], r);
+		}
+	}
+	return page_count;
+}
+
+static unsigned int handle_hc_free_to_buddy(struct kvm_vcpu *vcpu, unsigned long gfns_gva, unsigned long orders_gva, unsigned long nr_pages) {
+	unsigned long index;
+	unsigned int count = 0;
+	for (index = 0; index < nr_pages; index += RUNPV_BATCHED_PAGES_MAX_NR) {
+		unsigned long cur_gfns_gva = gfns_gva + index * sizeof(unsigned long);
+		unsigned long cur_orders_gva = orders_gva + index * sizeof(unsigned int);
+		unsigned long cur_nr_pages = min(nr_pages - index, RUNPV_BATCHED_PAGES_MAX_NR);
+		count += __free_to_buddy(vcpu, cur_gfns_gva, cur_orders_gva, cur_nr_pages);
+	}
+	// pr_info("%s: free %u pages to buddy\n", __func__, count);
+	return 1;
+}
+
+extern long runpv_mmu_set_pte(struct kvm_vcpu *vcpu, unsigned long ptep_pa, unsigned long pte, unsigned long level);
+extern int runpv_mmu_alloc_pte(struct kvm_vcpu *vcpu, unsigned long gfn, unsigned long level);
+extern int runpv_mmu_release_pte(struct kvm_vcpu *vcpu, unsigned long gfn, unsigned long level);
+
+static long handle_hc_set_pte(struct kvm_vcpu *vcpu, unsigned long ptep_pa, unsigned long pte, unsigned long level) {
+	long ret = runpv_mmu_set_pte(vcpu, ptep_pa, pte, level);
+	kvm_rax_write(vcpu, ret);
+	return 1;
+}
+
+static int handle_hc_alloc_pte(struct kvm_vcpu *vcpu, unsigned long gfn, unsigned long level) {
+	// pr_info("alloc pte gfn %#lx level %d\n", gfn, level);
+	int ret = runpv_mmu_alloc_pte(vcpu, gfn, level);
+	kvm_rax_write(vcpu, ret);
+	return 1;
+}
+
+static int handle_hc_release_pte(struct kvm_vcpu *vcpu, unsigned long gfn, unsigned long level) {
+	int ret = runpv_mmu_release_pte(vcpu, gfn, level);
+	kvm_rax_write(vcpu, ret);
+	return 1;
 }
 
 static int handle_kvm_hypercall(struct kvm_vcpu *vcpu)
@@ -2368,6 +2495,16 @@ static int handle_exit_syscall(struct kvm_vcpu *vcpu)
 		return handle_hc_set_page_offset_base(vcpu, a0);
   case PVM_HC_VIRTIO_NOTIFY:
     return handle_hc_virtio_kick(vcpu, a0, a1);
+	case PVM_HC_ALLOC_FROM_BUDDY:
+		return handle_hc_alloc_from_buddy(vcpu, a0, a1, a2);
+	case PVM_HC_FREE_TO_BUDDY:
+		return handle_hc_free_to_buddy(vcpu, a0, a1, a2);
+	case PVM_HC_SET_PTE:
+		return handle_hc_set_pte(vcpu, a0, a1, a2);
+	case PVM_HC_ALLOC_PTE:
+		return handle_hc_alloc_pte(vcpu, a0, a1);
+	case PVM_HC_RELEASE_PTE:
+		return handle_hc_release_pte(vcpu, a0, a1);
 	default:
 		return handle_kvm_hypercall(vcpu);
 	}
@@ -2967,6 +3104,8 @@ static fastpath_t pvm_vcpu_run(struct kvm_vcpu *vcpu)
 	this_cpu_write(cpu_tss_rw.tss_ex.page_array_base, vcpu->kvm->page_array_base);
 	this_cpu_write(cpu_tss_rw.tss_ex.page_offset_base, vcpu->kvm->page_offset_base);
 	this_cpu_write(cpu_tss_rw.tss_ex.mmu_lock_ptr, (unsigned long)&vcpu->kvm->mmu_lock);
+	this_cpu_write(cpu_tss_rw.tss_ex.vcpu_ptr, (unsigned long)vcpu);
+	this_cpu_write(cpu_tss_rw.tss_ex.set_pte_ptr, (unsigned long)runpv_mmu_set_pte);
 
 	trace_kvm_entry(vcpu);
 

@@ -3,10 +3,15 @@
 #define __ASM_X86_RUNPV_PARA_H
 
 #include <linux/sched.h>
-#include <linux/mm.h>
 #include <asm/pvm_para.h>
 
 #ifndef __ASSEMBLY__
+
+#define RUNPV_PFN_EVENT_NONE	(0)
+#define RUNPV_PFN_EVENT_ALLOC	(1)
+#define RUNPV_PFN_EVENT_FREE	(2)
+
+struct page;
 
 #ifdef CONFIG_RUNPV_GUEST
 DECLARE_PER_CPU_PAGE_ALIGNED(struct pvm_vcpu_struct, pvm_vcpu_struct);
@@ -16,6 +21,13 @@ void entry_DIRECTCALL_64_runpv(void);
 
 void runpv_free_page_hook(struct page *page, unsigned int order);
 void runpv_alloc_page_hook(struct page *page, unsigned int order, gfp_t gfp_flags);
+
+void runpv_alloc_from_buddy(struct page *pages[], unsigned int orders[], int nr_pages);
+void runpv_free_to_buddy(struct page *pages[], unsigned int orders[], int nr_pages);
+
+void runpv_pfn_event_enter(int event);
+void runpv_pfn_event_add(int event, struct page *page, unsigned int order);
+void runpv_pfn_event_exit(int event);
 
 static inline long runpv_hypercall3(long nr, long a0, long a1, long a2)
 {
@@ -46,12 +58,23 @@ static inline long runpv_hypercall0(long nr)
 	return runpv_hypercall1(nr, 0);
 }
 
-void __init runpv_early_setup(void);
+static inline long runpv_hypercall3_retry(long nr, long a0, long a1, long a2)
+{
+	for (;;) {
+		long ret = runpv_hypercall3(nr, a0, a1, a2);
+		if (ret == -EAGAIN) {
+			continue;
+		}
+		return ret;
+	}
+}
+
+void __init runpv_early_setup(unsigned long pgd);
 
 #else
 static inline void runpv_setup_pvcs(int cpu) { }
 
-static inline void runpv_early_setup(void) {
+static inline void runpv_early_setup(unsigned long pgd) {
 
 }
 
@@ -64,6 +87,26 @@ static inline void runpv_free_page_hook(struct page *page, unsigned int order) {
 }
 
 static inline void runpv_alloc_page_hook(struct page *page, unsigned int order, gfp_t gfp_flags){
+
+}
+
+static inline void runpv_alloc_from_buddy(struct page *pages[], unsigned int orders[], int nr_pages) {
+
+}
+
+static inline void runpv_free_to_buddy(struct page *pages[], unsigned int orders[], int nr_pages) {
+
+}
+
+static inline void runpv_pfn_event_enter(int event) {
+
+}
+
+static inline void runpv_pfn_event_add(int event, struct page *page, unsigned int order) {
+
+}
+
+static inline void runpv_pfn_event_exit(int event) {
 
 }
 

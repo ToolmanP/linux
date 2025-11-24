@@ -62,13 +62,6 @@ int free_one_page(struct runpv_page_buffer *page_buffer, unsigned long page);
 void runpv_bind_host_page(struct runpv_page_array *page_array, unsigned long gfn, unsigned long pfn);
 void runpv_get_host_page(struct runpv_page_array *page_array, unsigned long gfn, unsigned long *pfn);
 void runpv_unbind_host_page(struct runpv_page_array *page_array, unsigned long gfn);
-void runpv_mark_page_pt(struct runpv_page_array *page_array, unsigned long gfn, unsigned long pfn);
-void runpv_unmark_page_pt(struct runpv_page_array *page_array, unsigned long gfn);
-void runpv_get_shadow_pfn(struct runpv_page_array *page_array, unsigned long gfn, unsigned long **shadow_pfns);
-
-/* Exported page array functions */
-void runpv_mark_page_pt_shadow_pfn(struct runpv_page_array *page_array, unsigned long gfn, unsigned long shadow_pfn);
-void runpv_unmark_page_pt_shadow_pfn(struct runpv_page_array *page_array, unsigned long gfn, unsigned long shadow_pfn);
 
 #endif /* _ARCH_X86_ENTRY_SPLIT_VMM_H */
 

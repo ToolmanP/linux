@@ -132,6 +132,8 @@ struct tss_extra {
 	unsigned long page_array_base;
 	unsigned long page_offset_base;
 	unsigned long mmu_lock_ptr;
+	unsigned long vcpu_ptr;
+	unsigned long set_pte_ptr;
 } ____cacheline_aligned;
 
 extern struct pt_regs *switcher_enter_guest(void);
