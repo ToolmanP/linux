@@ -2319,19 +2319,11 @@ extern int runpv_faultin_direct_mapping(
 
 #define RUNPV_BATCHED_PAGES_MAX_NR 128
 
-static inline unsigned int __alloc_from_buddy(struct kvm_vcpu *vcpu, unsigned long gfns_gva, unsigned long orders_gva, unsigned long nr_pages)
+static inline unsigned int __alloc_from_buddy(struct kvm_vcpu *vcpu, unsigned long *gfns, unsigned int *orders, unsigned long nr_pages)
 {
-	unsigned long gfns[nr_pages];
-	unsigned int orders[nr_pages];
 	unsigned long i, j;
-	struct x86_exception exception;
 	int r;
 	unsigned int page_count = 0;
-
-	r = kvm_read_guest_virt(vcpu, gfns_gva, gfns, nr_pages * sizeof(unsigned long), &exception);
-	BUG_ON(r != X86EMUL_CONTINUE);
-	r = kvm_read_guest_virt(vcpu, orders_gva, orders, nr_pages * sizeof(unsigned int), &exception);
-	BUG_ON(r != X86EMUL_CONTINUE);
 
 	// for (int i = 0; i < nr_pages; i++) {
 	// 	pr_info("%s: gfn %#lx, order %d\n", __func__, gfns[i], orders[i]);
@@ -2360,29 +2352,27 @@ static inline unsigned int __alloc_from_buddy(struct kvm_vcpu *vcpu, unsigned lo
 static unsigned int handle_hc_alloc_from_buddy(struct kvm_vcpu *vcpu, unsigned long gfns_gva, unsigned long orders_gva, unsigned long nr_pages) {
 	unsigned long index;
 	unsigned int count = 0;
-	for (index = 0; index < nr_pages; index += RUNPV_BATCHED_PAGES_MAX_NR) {
-		unsigned long cur_gfns_gva = gfns_gva + index * sizeof(unsigned long);
-		unsigned long cur_orders_gva = orders_gva + index * sizeof(unsigned int);
-		unsigned long cur_nr_pages = min(nr_pages - index, RUNPV_BATCHED_PAGES_MAX_NR);
-		count += __alloc_from_buddy(vcpu, cur_gfns_gva, cur_orders_gva, cur_nr_pages);
-	}
-	// pr_info("%s: alloc %u pages from buddy\n", __func__, count);
-	return 1;
-}
-
-static inline unsigned int __free_to_buddy(struct kvm_vcpu *vcpu, unsigned long gfns_gva, unsigned long orders_gva, unsigned long nr_pages)
-{
-	unsigned long gfns[nr_pages];
-	unsigned int orders[nr_pages];
-	unsigned long i;
+	unsigned long *gfns = kmalloc(nr_pages * sizeof(unsigned long), GFP_KERNEL);
+	unsigned int *orders = kmalloc(nr_pages * sizeof(unsigned int), GFP_KERNEL);
 	struct x86_exception exception;
 	int r;
-	unsigned int page_count = 0;
 
 	r = kvm_read_guest_virt(vcpu, gfns_gva, gfns, nr_pages * sizeof(unsigned long), &exception);
 	BUG_ON(r != X86EMUL_CONTINUE);
 	r = kvm_read_guest_virt(vcpu, orders_gva, orders, nr_pages * sizeof(unsigned int), &exception);
 	BUG_ON(r != X86EMUL_CONTINUE);
+	count = __alloc_from_buddy(vcpu, gfns, orders, nr_pages);
+	kfree(gfns);
+	kfree(orders);
+	// pr_info("%s: alloc %u pages from buddy\n", __func__, count);
+	return 1;
+}
+
+static inline unsigned int __free_to_buddy(struct kvm_vcpu *vcpu, unsigned long *gfns, unsigned int *orders, unsigned long nr_pages)
+{
+	unsigned long i;
+	int r;
+	unsigned int page_count = 0;
 
 	for (i = 0; i < nr_pages; i++) {
 		page_count += (1 << orders[i]);
@@ -2398,14 +2388,19 @@ static inline unsigned int __free_to_buddy(struct kvm_vcpu *vcpu, unsigned long 
 }
 
 static unsigned int handle_hc_free_to_buddy(struct kvm_vcpu *vcpu, unsigned long gfns_gva, unsigned long orders_gva, unsigned long nr_pages) {
-	unsigned long index;
 	unsigned int count = 0;
-	for (index = 0; index < nr_pages; index += RUNPV_BATCHED_PAGES_MAX_NR) {
-		unsigned long cur_gfns_gva = gfns_gva + index * sizeof(unsigned long);
-		unsigned long cur_orders_gva = orders_gva + index * sizeof(unsigned int);
-		unsigned long cur_nr_pages = min(nr_pages - index, RUNPV_BATCHED_PAGES_MAX_NR);
-		count += __free_to_buddy(vcpu, cur_gfns_gva, cur_orders_gva, cur_nr_pages);
-	}
+	unsigned long *gfns = kmalloc(nr_pages * sizeof(unsigned long), GFP_KERNEL);
+	unsigned int *orders = kmalloc(nr_pages * sizeof(unsigned int), GFP_KERNEL);
+	struct x86_exception exception;
+	int r;
+
+	r = kvm_read_guest_virt(vcpu, gfns_gva, gfns, nr_pages * sizeof(unsigned long), &exception);
+	BUG_ON(r != X86EMUL_CONTINUE);
+	r = kvm_read_guest_virt(vcpu, orders_gva, orders, nr_pages * sizeof(unsigned int), &exception);
+	BUG_ON(r != X86EMUL_CONTINUE);
+	count = __free_to_buddy(vcpu, gfns, orders, nr_pages);
+	kfree(gfns);
+	kfree(orders);
 	// pr_info("%s: free %u pages to buddy\n", __func__, count);
 	return 1;
 }
