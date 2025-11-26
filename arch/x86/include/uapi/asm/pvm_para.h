@@ -61,6 +61,21 @@
 #define PVM_HC_SYNC_FREE_PAGES	(PVM_HC_SPECIAL_BASE+11)
 #define PVM_HC_SET_PAGE_OFFSET_BASE	(PVM_HC_SPECIAL_BASE+12)
 #define PVM_HC_VIRTIO_NOTIFY (PVM_HC_SPECIAL_BASE+13)
+#define PVM_HC_ALLOC_FROM_BUDDY	(PVM_HC_SPECIAL_BASE+14)
+#define PVM_HC_FREE_TO_BUDDY	(PVM_HC_SPECIAL_BASE+15)
+#define PVM_HC_SET_PTE		(PVM_HC_SPECIAL_BASE+16)
+#define PVM_HC_ALLOC_PTE		(PVM_HC_SPECIAL_BASE+17)
+#define PVM_HC_RELEASE_PTE		(PVM_HC_SPECIAL_BASE+18)
+#define PVM_HC_SET_PAGE_OFFSET	(PVM_HC_SPECIAL_BASE+19)
+
+#define PVM_SET_PTE_PTE	(1)
+#define PVM_SET_PTE_PMD	(2)
+#define PVM_SET_PTE_PUD	(3)
+#define PVM_SET_PTE_P4D	(4)
+
+#define PVM_SET_PTE_OP_WRITE	(0 << 5)
+#define PVM_SET_PTE_OP_XCHG	(1 << 5)
+#define PVM_SET_PTE_OP_MASK	(PVM_SET_PTE_OP_WRITE | PVM_SET_PTE_OP_XCHG)
 
 #define RUNPV_HC_SPECIAL_MAX_NR		(256)
 #define RUNPV_HC_SPECIAL_BASE		PVM_HC_SPECIAL_MAX
@@ -177,7 +192,6 @@ typedef struct {
 
 struct runpv_page_array_entry {
 	runpv_pae_t pfn;
-	unsigned long shadow_pfn[RUNPV_PAGE_ARRAY_SHADOW_COUNT];
 };
 
 struct runpv_page_array_slot {
@@ -204,6 +218,16 @@ struct runpv_page_buffer {
 	unsigned long free_head, free_rear;
 	unsigned long alloc_pfns[RUNPV_PAGE_BUFFER_PAGE_NR];
 	unsigned long free_pfns[RUNPV_PAGE_BUFFER_PAGE_NR];
+};
+
+#define RUNPV_BATCHED_PAGES_MAX_NR 2048
+struct page;
+struct runpv_batched_pages {
+	volatile int event;
+	int nr_pages;
+	struct page *pages[RUNPV_BATCHED_PAGES_MAX_NR];
+	unsigned long gfns[RUNPV_BATCHED_PAGES_MAX_NR];
+	unsigned int orders[RUNPV_BATCHED_PAGES_MAX_NR];
 };
 
 #define pv_print(debug_switch, print_func, fmt, ...) \

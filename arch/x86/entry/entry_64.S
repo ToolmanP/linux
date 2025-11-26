@@ -334,7 +334,8 @@ SYM_CODE_END(xen_error_entry)
 	movl	ORIG_RAX(%rsp), %eax
 	movl	%eax, ORIG_RAX+4(%rsp)
 	.endif
-	jmp	switcher_return_from_guest
+	movq	$0, TSS_extra(host_cr3_switched)
+	jmp	switcher_idt_entry
 .endm
 
 /**
@@ -1054,7 +1055,15 @@ SYM_CODE_START(error_entry)
 	swapgs
 	FENCE_SWAPGS_USER_ENTRY
 	/* We have user CR3.  Change to kernel CR3. */
+	/*
+	 * Test the magic bit in CR3 to check if it's a PVM guest.
+	 * See _pgd_alloc and shadow_root_alloc for details.
+	 */
+	mov	%cr3, %rax
+	test	$0x2000, %rax
+	jz	.Lskip_idt_cr3_switch
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rax
+.Lskip_idt_cr3_switch:
 	IBRS_ENTER
 	UNTRAIN_RET_FROM_CALL
 

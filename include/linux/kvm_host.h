@@ -1407,6 +1407,7 @@ int __kvm_mmu_topup_memory_cache(struct kvm_mmu_memory_cache *mc, int capacity, 
 int kvm_mmu_memory_cache_nr_free_objects(struct kvm_mmu_memory_cache *mc);
 void kvm_mmu_free_memory_cache(struct kvm_mmu_memory_cache *mc);
 void *kvm_mmu_memory_cache_alloc(struct kvm_mmu_memory_cache *mc);
+void kvm_mmu_memory_cache_free(struct kvm_mmu_memory_cache *mc, void *p);
 #endif
 
 void kvm_mmu_invalidate_begin(struct kvm *kvm, unsigned long start,

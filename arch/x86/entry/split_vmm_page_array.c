@@ -50,67 +50,6 @@ static inline void unbind_host_page(struct runpv_page_array_slot *slot, unsigned
 	pv_info(PAGE_ARRAY_DEBUG, "unbind gfn %#lx\n", gfn);
 }
 
-static inline void mark_page_pt(struct runpv_page_array_slot *slot, unsigned long gfn, unsigned long pfn)
-{
-	runpv_pae_t *pae = &slot->entries[gfn - slot->gfn_start].pfn;
-	BUG_ON(runpv_check_pae_pst(*pae));
-	*pae = runpv_make_pae(pfn, RUNPV_PAE_PST | RUNPV_PAE_PT);
-	pv_info(PAGE_ARRAY_DEBUG, "mark gfn %#lx as page table\n", gfn);
-	for (int i = 0; i < RUNPV_PAGE_ARRAY_SHADOW_COUNT; i++) {
-		slot->entries[gfn - slot->gfn_start].shadow_pfn[i] = 0;
-	}
-}
-
-static inline void unmark_page_pt(struct runpv_page_array_slot *slot, unsigned long gfn)
-{
-	runpv_pae_t *pae = &slot->entries[gfn - slot->gfn_start].pfn;
-	BUG_ON(!runpv_check_pae_pst(*pae));
-	BUG_ON(!runpv_check_pae_pt(*pae));
-	*pae = runpv_make_pae(0, 0);
-	pv_info(PAGE_ARRAY_DEBUG, "unmark gfn %#lx as page table\n", gfn);
-}
-
-static inline void mark_page_pt_shadow_pfn(struct runpv_page_array_slot *slot, unsigned long gfn, unsigned long shadow_pfn)
-{
-	runpv_pae_t *pae = &slot->entries[gfn - slot->gfn_start].pfn;
-	if (!runpv_check_pae_pst(*pae)) {
-		return;
-	}
-	BUG_ON(!runpv_check_pae_pt(*pae));
-	pv_info(PAGE_ARRAY_DEBUG, "mark gfn %#lx as page table shadow pfn %#lx\n", gfn, shadow_pfn);
-	unsigned long *shadow_pfn_array = slot->entries[gfn - slot->gfn_start].shadow_pfn;
-	for (int i = 0; i < RUNPV_PAGE_ARRAY_SHADOW_COUNT; i++) {
-		if (shadow_pfn_array[i] == 0) {
-			shadow_pfn_array[i] = shadow_pfn;
-			return;
-		}
-	}
-	pr_err("no free shadow pfn found for gfn %#lx\n", gfn);
-	BUG();
-}
-
-static inline void unmark_page_pt_shadow_pfn(struct runpv_page_array_slot *slot, unsigned long gfn, unsigned long shadow_pfn)
-{
-	pv_info(PAGE_ARRAY_DEBUG, "unmark shadow gfn %#lx\n", gfn);
-	unsigned long *shadow_pfn_array = slot->entries[gfn - slot->gfn_start].shadow_pfn;
-	for (int i = 0; i < RUNPV_PAGE_ARRAY_SHADOW_COUNT; i++) {
-		if (shadow_pfn_array[i] == shadow_pfn) {
-			shadow_pfn_array[i] = 0;
-			return;
-		}
-	}
-	// pr_err("no shadow pfn %lx found for gfn %lx\n", shadow_pfn, gfn);
-	// BUG();
-}
-
-static inline void get_shadow_pfn(struct runpv_page_array_slot *slot, unsigned long gfn, unsigned long **shadow_pfns)
-{
-	runpv_pae_t *pae = &slot->entries[gfn - slot->gfn_start].pfn;
-	BUG_ON(!runpv_check_pae_pst(*pae));
-	BUG_ON(!runpv_check_pae_pt(*pae));
-	*shadow_pfns = slot->entries[gfn - slot->gfn_start].shadow_pfn;
-}
-
 void runpv_register_page_array_slot(struct runpv_page_array *page_array, unsigned long gfn_start, unsigned long gfn_size)
 {
 	struct runpv_page_array_slot *slot;
@@ -172,47 +111,18 @@ void runpv_bind_host_page(struct runpv_page_array *page_array, unsigned long gfn
 	struct runpv_page_array_slot *slot = get_slot(page_array, gfn);
 	bind_host_page(slot, gfn, pfn);
 }
+EXPORT_SYMBOL_GPL(runpv_bind_host_page);
 
 void runpv_get_host_page(struct runpv_page_array *page_array, unsigned long gfn, unsigned long *pfn)
 {
 	struct runpv_page_array_slot *slot = get_slot(page_array, gfn);
 	get_host_page(slot, gfn, pfn);
 }
+EXPORT_SYMBOL_GPL(runpv_get_host_page);
 
 void runpv_unbind_host_page(struct runpv_page_array *page_array, unsigned long gfn)
 {
 	struct runpv_page_array_slot *slot = get_slot(page_array, gfn);
 	unbind_host_page(slot, gfn);
 }
-
-void runpv_mark_page_pt(struct runpv_page_array *page_array, unsigned long gfn, unsigned long pfn)
-{
-	struct runpv_page_array_slot *slot = get_slot(page_array, gfn);
-	mark_page_pt(slot, gfn, pfn);
-}
-
-void runpv_unmark_page_pt(struct runpv_page_array *page_array, unsigned long gfn)
-{
-	struct runpv_page_array_slot *slot = get_slot(page_array, gfn);
-	unmark_page_pt(slot, gfn);
-}
-
-void runpv_mark_page_pt_shadow_pfn(struct runpv_page_array *page_array, unsigned long gfn, unsigned long shadow_pfn)
-{
-	struct runpv_page_array_slot *slot = get_slot(page_array, gfn);
-	mark_page_pt_shadow_pfn(slot, gfn, shadow_pfn);
-}
-EXPORT_SYMBOL_GPL(runpv_mark_page_pt_shadow_pfn);
-
-void runpv_unmark_page_pt_shadow_pfn(struct runpv_page_array *page_array, unsigned long gfn, unsigned long shadow_pfn)
-{
-	struct runpv_page_array_slot *slot = get_slot(page_array, gfn);
-	unmark_page_pt_shadow_pfn(slot, gfn, shadow_pfn);
-}
-EXPORT_SYMBOL_GPL(runpv_unmark_page_pt_shadow_pfn);
-
-void runpv_get_shadow_pfn(struct runpv_page_array *page_array, unsigned long gfn, unsigned long **shadow_pfns)
-{
-	struct runpv_page_array_slot *slot = get_slot(page_array, gfn);
-	get_shadow_pfn(slot, gfn, shadow_pfns);
-}
+EXPORT_SYMBOL_GPL(runpv_unbind_host_page);

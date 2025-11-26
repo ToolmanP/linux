@@ -665,15 +665,20 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 		goto out_gpte_changed;
 	}
 
+	// unsigned long last_pse = 0;
 	for_each_shadow_entry(vcpu, fault->addr, it) {
+		// pr_info("indirect walk level %d gfn %#lx\n", it.level, fault->gfn);
 		gfn_t table_gfn;
 
 		clear_sp_write_flooding_count(it.sptep);
 		if (it.level == gw->level)
 			break;
 
+		// last_pse = gw->ptes[it.level - 2] & _PAGE_PSE;
+		// pr_info("indirect walk level %d, pte[pse] %#lx vaddr %#lx", it.level, gw->ptes[it.level - 2] & _PAGE_PSE, fault->addr);
 		table_gfn = gw->table_gfn[it.level - 2];
 		access = gw->pt_access[it.level - 2];
+		// pr_info("%s %d table_gfn %#lx role %#lx\n", __func__, __LINE__, table_gfn, kvm_mmu_child_role(it.sptep, false, access).word);
 		sp = kvm_mmu_get_child_sp(vcpu, it.sptep, table_gfn,
 					  false, access);
 
@@ -706,8 +711,10 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 		if (FNAME(gpte_changed)(vcpu, gw, it.level - 1))
 			goto out_gpte_changed;
 
-		if (sp != ERR_PTR(-EEXIST))
+		if (sp != ERR_PTR(-EEXIST)) {
+			// pr_info("%s %d: link_shadow_page vaddr %#lx level %d sptep %#lx, child_spt %#lx\n", __func__, __LINE__, fault->addr, it.level, it.sptep, sp->spt);
 			link_shadow_page(vcpu, it.sptep, sp);
+		}
 
 		if (fault->write && table_gfn == fault->gfn)
 			fault->write_fault_to_shadow_pgtable = true;
@@ -735,13 +742,17 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 		if (it.level == fault->goal_level)
 			break;
 
+		// pr_info("direct walk level %d\n", it.level);
+		// BUG_ON(!last_pse);
 		validate_direct_spte(vcpu, it.sptep, direct_access);
 
+		// pr_info("%s %d base_gfn %#lx role %#lx vaddr %#lx\n", __func__, __LINE__, base_gfn, kvm_mmu_child_role(it.sptep, true, direct_access).word, fault->addr);
 		sp = kvm_mmu_get_child_sp(vcpu, it.sptep, base_gfn,
 					  true, direct_access);
 		if (sp == ERR_PTR(-EEXIST))
 			continue;
 
+		// pr_info("%s %d: link_shadow_page vaddr %#lx level %d sptep %#lx, child_spt %#lx\n", __func__, __LINE__, fault->addr, it.level, it.sptep, sp->spt);
 		link_shadow_page(vcpu, it.sptep, sp);
 		if (fault->huge_page_disallowed)
 			account_nx_huge_page(vcpu->kvm, sp,
@@ -751,6 +762,7 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 	if (WARN_ON_ONCE(it.level != fault->goal_level))
 		return -EFAULT;
 
+	// pr_info("actually set spte %#lx %#lx %#lx %#lx %#lx %#lx %#lx %#lx %#lx\n", vcpu, fault->slot, it.sptep, gw->pte_access, base_gfn, fault->pfn, fault->map_writable, fault->prefetch, fault->write);
 	ret = mmu_set_spte(vcpu, fault->slot, it.sptep, gw->pte_access,
 			   base_gfn, fault->pfn, fault);
 	if (ret == RET_PF_SPURIOUS)
@@ -784,6 +796,8 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 
 	WARN_ON_ONCE(fault->is_tdp);
 
+	// pr_info("%s:%d: fault->addr %#lx, fault->error_code %#lx\n", __func__, __LINE__, fault->addr, fault->error_code);
+
 	/*
 	 * Look up the guest pte for the faulting address.
 	 * If PFEC.RSVD is set, this is a shadow page fault.
@@ -801,6 +815,12 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 
 		return RET_PF_RETRY;
 	}
+
+	// if (fault->addr >= vcpu->kvm->page_offset_base) {
+	// 	pr_info("%s:%d: fault->addr %#lx, fault->error_code %#lx rip %#lx\n", __func__, __LINE__, fault->addr, fault->error_code, vcpu->arch.regs[VCPU_REGS_RIP]);
+	// }
+
+	// pr_info("%s:%d: fault->addr %#lx, fault->error_code %#lx\n", __func__, __LINE__, fault->addr, fault->error_code);
 
 	fault->gfn = walker.gfn;
 	fault->max_level = walker.level;
@@ -852,6 +872,109 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 out_unlock:
 	write_unlock(&vcpu->kvm->mmu_lock);
 	kvm_release_pfn_clean(fault->pfn);
+	return r;
+}
+
+static int FNAME(direct_mapping_page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault, unsigned long pfn)
+{
+	struct guest_walker walker;
+	int r;
+
+	BUG_ON(fault->is_tdp);
+
+	// if (fault->addr >= vcpu->kvm->page_offset_base) {
+	// 	pr_info("%s:%d: fault->addr %#lx, fault->error_code %#lx\n", __func__, __LINE__, fault->addr, fault->error_code);
+	// }
+
+
+	/*
+	 * Look up the guest pte for the faulting address.
+	 * If PFEC.RSVD is set, this is a shadow page fault.
+	 * The bit needs to be cleared before walking guest page tables.
+	 */
+	r = FNAME(walk_addr)(&walker, vcpu, fault->addr,
+			     fault->error_code & ~PFERR_RSVD_MASK);
+
+	/*
+	 * The page is not mapped by the guest.  Let the guest handle it.
+	 */
+	if (!r) {
+		pr_info("%s:%d: fault->addr %#lx, fault->error_code %#lx\n", __func__, __LINE__, fault->addr, fault->error_code);
+		BUG();
+		if (!fault->prefetch)
+			kvm_inject_emulated_page_fault(vcpu, &walker.fault);
+
+		return RET_PF_RETRY;
+	}
+
+	// pr_info("%s:%d: fault->addr %#lx, fault->error_code %#lx\n", __func__, __LINE__, fault->addr, fault->error_code);
+
+	fault->gfn = walker.gfn;
+	fault->max_level = walker.level;
+	fault->slot = kvm_vcpu_gfn_to_memslot(vcpu, fault->gfn);
+
+	if (page_fault_handle_page_track(vcpu, fault)) {
+		BUG();
+		shadow_page_table_clear_flood(vcpu, fault->addr);
+		return RET_PF_EMULATE;
+	}
+
+	r = mmu_topup_memory_caches(vcpu, true);
+	if (r) {
+		BUG();
+		return r;
+	}
+
+	// r = kvm_faultin_pfn(vcpu, fault, walker.pte_access);
+	// if (r != RET_PF_CONTINUE) {
+	// 	BUG();
+	// 	return r;
+	// }
+	// pr_info("writable %#lx\n", fault->map_writable);
+	fault->mmu_seq = vcpu->kvm->mmu_invalidate_seq;
+	smp_rmb();
+	fault->pfn = pfn;
+	fault->hva = __gfn_to_hva_memslot(fault->slot, fault->gfn);
+	fault->map_writable = 1;
+
+	/*
+	 * Do not change pte_access if the pfn is a mmio page, otherwise
+	 * we will cache the incorrect access into mmio spte.
+	 */
+	if (fault->write && !(walker.pte_access & ACC_WRITE_MASK) &&
+	    !is_cr0_wp(vcpu->arch.mmu) && !fault->user && fault->slot) {
+		BUG();
+		walker.pte_access |= ACC_WRITE_MASK;
+		walker.pte_access &= ~ACC_USER_MASK;
+
+		/*
+		 * If we converted a user page to a kernel page,
+		 * so that the kernel can write to it when cr0.wp=0,
+		 * then we should prevent the kernel from executing it
+		 * if SMEP is enabled.
+		 */
+		if (is_cr4_smep(vcpu->arch.mmu))
+			walker.pte_access &= ~ACC_EXEC_MASK;
+	}
+
+	r = RET_PF_RETRY;
+	write_lock(&vcpu->kvm->mmu_lock);
+
+	if (is_page_fault_stale(vcpu, fault)) {
+		// BUG();
+		goto out_unlock;
+	}
+
+	r = make_mmu_pages_available(vcpu);
+	if (r) {
+		BUG();
+		goto out_unlock;
+	}
+	r = FNAME(fetch)(vcpu, fault, &walker);
+
+out_unlock:
+	write_unlock(&vcpu->kvm->mmu_lock);
+	// kvm_release_pfn_clean(fault->pfn);
 	return r;
 }
 
