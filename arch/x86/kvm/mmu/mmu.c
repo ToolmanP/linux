@@ -2930,6 +2930,20 @@ out:
 
 /* Caches used when allocating a new shadow page. */
 
+// RUNPV: Use the 13th bit to indicate if the pgd is a PVM guest shadow root.
+void *shadow_root_alloc(struct kvm_mmu_memory_cache *caches)
+{
+	void *candidate = kvm_mmu_memory_cache_alloc(caches);
+	void *spt;
+	if (!(((unsigned long)candidate >> 13) & 1)) {
+		spt = shadow_root_alloc(caches);
+		free_page(candidate);
+	} else {
+		spt = (void *)candidate;
+	}
+	return spt;
+}
+
 static struct kvm_mmu_page *kvm_mmu_alloc_shadow_page(struct kvm *kvm,
 						      struct shadow_page_caches *caches,
 						      gfn_t gfn,

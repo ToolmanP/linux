@@ -83,6 +83,7 @@ int main(void)
 	ENTRY(mmu_lock_ptr);
 	ENTRY(vcpu_ptr);
 	ENTRY(set_pte_ptr);
+	ENTRY(host_cr3_switched);
 	BLANK();
 #undef ENTRY
 
