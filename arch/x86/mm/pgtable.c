@@ -418,10 +418,20 @@ static inline void _pgd_free(pgd_t *pgd)
 }
 #else
 
+// RUNPV: Use the 13th bit to indicate if the pgd is a PVM guest shadow root.
 static inline pgd_t *_pgd_alloc(void)
 {
-	return (pgd_t *)__get_free_pages(GFP_PGTABLE_USER,
+	unsigned long candidate = __get_free_pages(GFP_PGTABLE_USER,
 					 PGD_ALLOCATION_ORDER);
+	pgd_t *pgd;
+	if ((candidate >> 13) & 1) {
+		pgd = _pgd_alloc();
+		free_pages(candidate, PGD_ALLOCATION_ORDER);
+	} else {
+		pgd = (pgd_t *)candidate;
+	}
+	BUG_ON(((unsigned long)pgd >> 13) & 1);
+	return pgd;
 }
 
 static inline void _pgd_free(pgd_t *pgd)

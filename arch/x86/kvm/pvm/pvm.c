@@ -1752,6 +1752,60 @@ static int __do_pvm_event(struct kvm_vcpu *vcpu, bool user, int vector,
 	return 1;
 }
 
+static void pvm_switch_to_page_fault_context(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_pvm *pvm = to_pvm(vcpu);
+	unsigned long rsp = kvm_rsp_read(vcpu);
+	unsigned long entry;
+	struct pvm_vcpu_struct *pvcs;
+	bool user = !is_smod(pvm);
+	u64 err_code = pvm->exit_error_code;
+
+	vcpu->arch.cr2 = pvm->exit_cr2;
+
+	pvcs = this_cpu_read(cpu_tss_rw.tss_ex.pvcs);
+	BUG_ON(!pvcs || (!user && !(pvcs->event_flags & PVM_EVENT_FLAGS_EF)));
+
+	if (user) {
+		pvcs->user_cs = pvm->hw_cs;
+		pvcs->user_ss = pvm->hw_ss;
+		pvcs->pkru = 0;
+		pvcs->user_gsbase = pvm_read_guest_gs_base(pvm);
+	}
+	pvcs->eflags = kvm_get_rflags(vcpu);
+	pvcs->rip = kvm_rip_read(vcpu);
+	pvcs->rsp = rsp;
+	pvcs->rcx = kvm_rcx_read(vcpu);
+	pvcs->r11 = kvm_r11_read(vcpu);
+
+	pvcs->event_errcode = err_code;
+	pvcs->event_vector = PF_VECTOR;
+	pvcs->cr2 = vcpu->arch.cr2;
+
+	pvcs->event_flags &= ~(PVM_EVENT_FLAGS_EF | PVM_EVENT_FLAGS_EP | PVM_EVENT_FLAGS_IF);
+	__pvm_set_rflags(pvm, X86_EFLAGS_FIXED);
+
+	if (user) {
+		pvm_switch_flags_toggle_mod(pvm);
+		pvm_write_guest_gs_base(pvm, pvm->msr_kernel_gs_base);
+		kvm_rsp_write(vcpu, __pvm_get_supervisor_rsp(pvm));
+		pvm->hw_cs = __USER_CS;
+		pvm->hw_ss = __USER_DS;
+	} else {
+		kvm_rsp_write(vcpu, rsp & ~15UL);
+		__pvm_set_supervisor_rsp(pvm, rsp & ~15UL);
+	}
+
+	if (user)
+		entry = pvm->msr_event_entry;
+	else
+		entry = pvm->msr_event_entry + 512;
+
+	kvm_rip_write(vcpu, entry);
+	kvm_rcx_write(vcpu, entry);
+	kvm_r11_write(vcpu, X86_EFLAGS_IF | X86_EFLAGS_FIXED);
+}
+
 static int do_pvm_event(struct kvm_vcpu *vcpu, int vector,
 			bool has_error_code, u64 error_code)
 {
@@ -2741,6 +2795,122 @@ static int pvm_handle_exit(struct kvm_vcpu *vcpu, fastpath_t exit_fastpath)
 	return 0;
 }
 
+static inline unsigned long guest_va(unsigned long gpa, struct kvm_vcpu *vcpu)
+{
+	unsigned long gfn = gpa >> PAGE_SHIFT;
+	kvm_pfn_t pfn = kvm_vcpu_gfn_to_pfn_atomic(vcpu, gfn);
+	BUG_ON(is_error_noslot_pfn(pfn));
+	return (unsigned long)phys_to_virt(pfn << PAGE_SHIFT) + (gpa & ~PAGE_MASK);
+}
+#define __guest_va(gpa) guest_va(gpa, vcpu)
+
+/*
+ * Walk the shadow page table and check if the page fault error code
+ * matches the actual state of the page table entries.
+ */
+static bool pvm_walk_shadow_pgtable_check_fault(struct kvm_vcpu *vcpu,
+						unsigned long cr2,
+						unsigned long cr3,
+						u32 error_code)
+{
+	pgd_t *pgd_base, *pgd;
+	p4d_t *p4d;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *pte;
+	unsigned long pte_val_flags;
+	bool is_write = error_code & PFERR_WRITE_MASK;
+	bool is_user = error_code & PFERR_USER_MASK;
+	bool is_fetch = error_code & PFERR_FETCH_MASK;
+	bool err_present = error_code & PFERR_PRESENT_MASK;
+
+	pgd_base = (pgd_t *)__guest_va(cr3 & CR3_ADDR_MASK);
+
+	pgd = pgd_base + pgd_index(cr2);
+	if (!pgd_present(*pgd)) {
+		return !err_present;
+	}
+	p4d = (p4d_t *)pgd;
+	if (!p4d_present(*p4d)) {
+		return !err_present;
+	}
+	pud = (pud_t *)__guest_va(p4d_val(*p4d) & PTE_PFN_MASK) + pud_index(cr2);
+	if (!pud_present(*pud)) {
+		return !err_present;
+	}
+	if (pud_large(*pud)) {
+		pte_val_flags = pud_flags(*pud);
+		goto check_permissions;
+	}
+	pmd = (pmd_t *)__guest_va(pud_val(*pud) & PTE_PFN_MASK) + pmd_index(cr2);
+	if (!pmd_present(*pmd)) {
+		return !err_present;
+	}
+	if (pmd_large(*pmd)) {
+		pte_val_flags = pmd_flags(*pmd);
+		goto check_permissions;
+	}
+	pte = (pte_t *)__guest_va(pmd_val(*pmd) & PTE_PFN_MASK) + pte_index(cr2);
+	if (!pte_present(*pte)) {
+		return !err_present;
+	}
+	pte_val_flags = pte_flags(*pte);
+
+check_permissions:
+	if (!err_present) {
+		return false;
+	}
+	if (is_write && !(pte_val_flags & _PAGE_RW)) {
+		return true;
+	}
+	if (is_user && !(pte_val_flags & _PAGE_USER)) {
+		return true;
+	}
+	if (is_fetch && (pte_val_flags & _PAGE_NX)) {
+		return true;
+	}
+	return false;
+}
+
+bool pvm_check_guest_page_fault(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_pvm *pvm = to_pvm(vcpu);
+	u32 exit_reason = pvm->exit_vector;
+	if (unlikely(pvm->non_pvm_mode)) {
+		return false;
+	}
+	if (unlikely(vcpu->kvm->page_offset_base == 0)) {
+		return false;
+	}
+	if (exit_reason >= 0 && exit_reason < FIRST_EXTERNAL_VECTOR) {
+		u32 vector, error_code;
+
+		vector = pvm->exit_vector;
+		if (vector == PF_VECTOR) {
+			error_code = pvm->exit_error_code;
+
+			// Remove hardware generated PFERR_USER_MASK when in supervisor
+			// mode to reflect the real mode in PVM.
+			if (is_smod(pvm))
+				error_code &= ~PFERR_USER_MASK;
+	
+			// If it is a PK fault, set pkru=0 and re-enter the guest silently.
+			// See the comment before pvm_load_guest_xsave_state().
+			if (cpu_feature_enabled(X86_FEATURE_PKU) && (error_code & PFERR_PK_MASK))
+				return 1;
+
+			// Walk the shadow page table and check if this is a guest fault
+			bool is_guest = pvm_walk_shadow_pgtable_check_fault(
+				vcpu,
+				pvm->exit_cr2,
+				kvm_read_cr3(vcpu),
+				error_code);
+			return is_guest;
+		}
+	}
+	return false;
+}
+
 static u32 pvm_get_syscall_exit_reason(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_pvm *pvm = to_pvm(vcpu);
@@ -3113,8 +3283,26 @@ static fastpath_t pvm_vcpu_run(struct kvm_vcpu *vcpu)
 	if (pvm->host_debugctlmsr)
 		update_debugctlmsr(0);
 
-	pvm_vcpu_run_noinstr(vcpu);
-
+	for (;;) {
+		this_cpu_write(cpu_tss_rw.tss_ex.host_cr3_switched, 1);
+		pvm_vcpu_run_noinstr(vcpu);
+		unsigned long host_cr3_switched = this_cpu_read(cpu_tss_rw.tss_ex.host_cr3_switched);
+		bool is_guest = pvm_check_guest_page_fault(vcpu);
+		if (is_guest) {
+			pvm_switch_to_page_fault_context(vcpu);
+			continue;
+		}
+		if (!host_cr3_switched) {
+			unsigned long host_cr3 = this_cpu_read(cpu_tss_rw.tss_ex.host_cr3);
+			asm volatile(
+				"mov %0, %%cr3"
+				:
+				: "r"(host_cr3)
+				: "memory"
+			);
+		}
+		break;
+	}
 
 	/* MSR_IA32_DEBUGCTLMSR is zeroed before vmenter. Restore it if needed */
 	if (pvm->host_debugctlmsr)

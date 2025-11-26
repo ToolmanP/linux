@@ -85,6 +85,7 @@ SYM_INNER_LABEL(switcher_return_from_guest, SYM_L_GLOBAL)
 	movq	TSS_extra(host_cr3), %rax
 	movq	%rax, %cr3
 .Lskip_host_cr3_switch:
+SYM_INNER_LABEL(switcher_idt_entry, SYM_L_GLOBAL)
 	MITIGATION_ENTER
 
 	/* Restore to host RSP and mark the switcher inactive */
