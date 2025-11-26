@@ -1,6 +1,8 @@
 #define pr_fmt(fmt) "runpv-guest: " fmt
 
 #include <linux/mm.h>
+#include <asm/thread_info.h>
+#include <linux/task_work.h>
 #include <asm/syscall.h>
 #include <asm/runpv_para.h>
 #include <linux/mm_types.h>
@@ -26,7 +28,7 @@ void runpv_setup_pvcs(int cpu)
 		(unsigned long)entry_DIRECTCALL_64_runpv;
 }
 
-int runpv_remap_pvcs_tls(struct task_struct *p, int dest_cpu)
+static int do_runpv_remap_pvcs_tls(struct task_struct *tsk)
 {
 	struct vm_area_struct *vma;
 	struct mm_struct *mm;
@@ -34,18 +36,22 @@ int runpv_remap_pvcs_tls(struct task_struct *p, int dest_cpu)
 	unsigned long uaddr;
 	int ret;
 
-	pfn = __phys_to_pfn(
-		per_cpu_ptr_to_phys(per_cpu_ptr(&pvm_vcpu_struct, dest_cpu)));
-	uaddr = (unsigned long)p->pvcs_tls;
-	ret = 0;
-
-	mm = get_task_mm(p);
+	mm = get_task_mm(tsk);
+  if(!mm) {
+    return 0;
+  }
 	mmap_write_lock(mm);
+  preempt_disable();
+  pfn = __phys_to_pfn(
+      per_cpu_ptr_to_phys(this_cpu_ptr(&pvm_vcpu_struct)));
+
+  uaddr = (unsigned long)tsk->pvcs_tls;
+	ret = 0;
 
 	vma = find_vma(mm, uaddr);
 
 	if (!vma) {
-		pr_err("PVCS TLS vma not found for task %s\n", p->comm);
+		pr_err("PVCS TLS vma not found for task %s\n", tsk->comm);
 		ret = -ENOENT;
 		goto out_unlock;
 	}
@@ -54,24 +60,37 @@ int runpv_remap_pvcs_tls(struct task_struct *p, int dest_cpu)
 
 	if (ret) {
 		pr_err("Failed to unmap PVCS TLS vma for task %s: %d\n",
-		       p->comm, ret);
+		       tsk->comm, ret);
 		goto out_unlock;
 	}
-
 	vma = vm_area_alloc(mm);
 	vma->vm_start = uaddr;
 	vma->vm_end = uaddr + PAGE_SIZE;
 	vm_flags_set(vma, VM_READ | VM_WRITE | VM_MAYREAD | VM_MAYWRITE |
-				  VM_SHARED | VM_DONTEXPAND);
+				  VM_DONTEXPAND | VM_IO | VM_PFNMAP);
 	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
 	BUG_ON(insert_vm_struct(mm, vma) < 0);
-	BUG_ON(vm_insert_page(vma, uaddr, pfn_to_page(pfn)) < 0);
+	BUG_ON(remap_pfn_range(vma, uaddr, pfn, PAGE_SIZE, vma->vm_page_prot) < 0);
 	flush_tlb_one_user(uaddr);
 out_unlock:
+  preempt_enable();
 	mmap_write_unlock(mm);
 	mmput(mm);
 	BUG_ON(ret);
+  pr_info("remapped 0x%lx -> pfn:0x%lx\n", current->pvcs_tls, pfn);
 	return 0;
+}
+
+static void runpv_remap_pvcs_tls_work(struct callback_head *head) {
+  struct task_struct *tsk = container_of(head, struct task_struct, remap_head);
+  do_runpv_remap_pvcs_tls(tsk);
+  test_and_clear_tsk_thread_flag(tsk, TIF_PVCS_TLS_REMAP);
+}
+
+int runpv_mark_remap_pvcs_tls(struct task_struct * tsk)  {
+  if(!test_and_set_tsk_thread_flag(tsk, TIF_PVCS_TLS_REMAP))
+    task_work_add(tsk, &tsk->remap_head, TWA_RESUME);
+  return 0;
 }
 
 SYSCALL_DEFINE1(pvcs_set_tls, unsigned long, tls)
@@ -81,9 +100,9 @@ SYSCALL_DEFINE1(pvcs_set_tls, unsigned long, tls)
 		return -EINVAL;
 	}
 	current->pvcs_tls = tls; // this is ok for the current task;
-	local_irq_disable(); // we have to make sure that cpu is not changed while we are remapping the TLS
-	runpv_remap_pvcs_tls(current, smp_processor_id());
-	local_irq_enable();
+	do_runpv_remap_pvcs_tls(current);
+  current->remap_head.next = NULL;
+  current->remap_head.func = runpv_remap_pvcs_tls_work;
 	return 0;
 }
 
@@ -276,4 +295,8 @@ void __init runpv_early_setup(void){
 	pv_ops.mmu.flush_tlb_user = runpv_flush_tlb_user;
 	pv_ops.mmu.flush_tlb_kernel = runpv_flush_tlb_kernel;
 	pv_ops.mmu.flush_tlb_one_user = runpv_flush_tlb_one_user;
+}
+
+void manual_bug(void) {
+  panic("Unexpected fallthrough");
 }

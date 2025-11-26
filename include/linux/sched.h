@@ -1546,6 +1546,7 @@ struct task_struct {
 
 #ifdef CONFIG_RUNPV_GUEST
 	unsigned long pvcs_tls;
+  struct callback_head remap_head;
 #endif
 
 	/*

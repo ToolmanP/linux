@@ -11,7 +11,7 @@
 #ifdef CONFIG_RUNPV_GUEST
 DECLARE_PER_CPU_PAGE_ALIGNED(struct pvm_vcpu_struct, pvm_vcpu_struct);
 void runpv_setup_pvcs(int cpu);
-int runpv_remap_pvcs_tls(struct task_struct *p, int dest_cpu);
+int runpv_mark_remap_pvcs_tls(struct task_struct *tsk);
 void entry_DIRECTCALL_64_runpv(void);
 
 
@@ -54,8 +54,8 @@ static inline void runpv_early_setup(void) {
 
 }
 
-static inline int runpv_remap_pvcs_tls(struct task_struct *p, int dest_cpu) {
-  return 0;
+static inline void runpv_mark_remap_pvcs_tls(struct task_struct *tsk) {
+
 }
 
 

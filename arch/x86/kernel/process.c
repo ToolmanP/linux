@@ -99,6 +99,11 @@ int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
 	/* Drop the copied pointer to current's fpstate */
 	dst->thread.fpu.fpstate = NULL;
 
+#ifdef CONFIG_RUNPV_GUEST
+  if(dst->pvcs_tls)
+    dst->pvcs_tls = 0;
+#endif
+
 	return 0;
 }
 

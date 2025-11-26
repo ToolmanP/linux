@@ -1599,7 +1599,8 @@ static int wait_for_vfork_done(struct task_struct *child,
 	killed = wait_for_completion_state(vfork, state);
 	cgroup_leave_frozen(false);
 #ifdef CONFIG_RUNPV_GUEST
-	runpv_remap_pvcs_tls(current, smp_processor_id());
+  if(current->pvcs_tls)
+    runpv_mark_remap_pvcs_tls(current);
 #endif
 	if (killed) {
 		task_lock(child);

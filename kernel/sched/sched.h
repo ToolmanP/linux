@@ -2036,7 +2036,7 @@ static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
 #ifdef CONFIG_RUNPV_GUEST
 		if(p->pvcs_tls)
 			/* we need to remap the cpu per variable on to this address with read-write access */
-			runpv_remap_pvcs_tls(p, cpu);
+			runpv_mark_remap_pvcs_tls(p);
 #endif
 #endif
 }
