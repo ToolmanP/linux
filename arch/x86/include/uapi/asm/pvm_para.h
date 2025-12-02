@@ -89,6 +89,8 @@
 #define RUNPV_HC_TLB_FLUSH_CURRENT	(RUNPV_HC_SPECIAL_BASE+5)
 #define RUNPV_HC_TLB_INVLPG		(RUNPV_HC_SPECIAL_BASE+6)
 
+#define RUNPV_USER_GSBASE_MAGIC (0xfff)
+
 /*
  * PVM_EVENT_FLAGS_EF
  *	- Event enable flag. The flag is set to respond to events;
@@ -168,6 +170,7 @@ struct pvm_vcpu_struct {
 	u64 user_rsp;
 	u64 intr_mask;
 	u64 yui_entry;
+  u64 pid;
 } __aligned(PAGE_SIZE);
 
 #define RUNPV_PAGE_ARRAY_SHADOW_COUNT	(16)

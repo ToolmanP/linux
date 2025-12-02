@@ -2,8 +2,6 @@
 
 #include "ritsu.h"
 
-.extern check_kernel_rsp
-
 .text
 .hidden jump_to_yui
 .global jump_to_yui
@@ -24,21 +22,14 @@ jump_to_yui:
   pushq %r12
   pushq %r13
 
-  /* get tls_var pvcs using __tls_get_addr*/
-  pushq %r10
-  pushq %r11
-  leaq	pvcs@TLSGD(%rip), %rdi
-  call  __tls_get_addr@PLT
-  movq  %rax, %r12
-  popq %r11
-  popq %r10
+  rdgsbase %r12
+  andq $(~0xfff), %r12
 
   /* mask the interrupt altogether. This should disable all interrupts except for nmi. */
   orq $INTR_MASK_IF, PVCS_intr_mask(%r12)
 
   /* save user_gsbase */
-  rdgsbase %r13
-  pushq %r13
+  pushq %r12
 
   pushq PVCS_kernel_rsp(%r12)
   /* save the stack pointer into scratch rsp */
@@ -99,10 +90,13 @@ jump_to_yui:
 .Ljump_to_yui_postlogue:
 
   popq %r13
+  popq %r12
   movq %r13, PVCS_kernel_rsp(%r12) /* restore the kernel rsp */
 
-  popq %r13
-  wrgsbase %r13 /* restore the user gsbase from this stack */
+  movq %r12, %r13
+  orq $GSBASE_MAGIC, %r13
+  movq %r13, PVCS_user_gsbase(%r12)
+  wrgsbase %r13 /* restore the user gsbase from this stack. */
 
   andq $(~INTR_MASK_IF), PVCS_intr_mask(%r12) /* restore the interrupt state, we are safe now */
   popq %r13

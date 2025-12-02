@@ -18,6 +18,7 @@
 #include <linux/spinlock.h>
 #include <linux/errno.h>
 #include <linux/ktime.h>
+#include <asm/tlbflush.h>
 
 void runpv_setup_pvcs(int cpu)
 {
@@ -37,43 +38,34 @@ static int do_runpv_remap_pvcs_tls(struct task_struct *tsk)
 	int ret;
 
 	mm = get_task_mm(tsk);
-  if(!mm) {
+
+  if(!mm) 
     return 0;
-  }
+
 	mmap_write_lock(mm);
-  preempt_disable();
+  local_irq_disable();
+  uaddr = (unsigned long)tsk->pvcs_tls;
+	ret = 0;
+	vma = find_vma(mm, uaddr);
   pfn = __phys_to_pfn(
       per_cpu_ptr_to_phys(this_cpu_ptr(&pvm_vcpu_struct)));
 
-  uaddr = (unsigned long)tsk->pvcs_tls;
-	ret = 0;
+	if (vma->vm_start == uaddr && vma->vm_end == uaddr + PAGE_SIZE) {
+    zap_page_range_single(vma, uaddr, PAGE_SIZE, NULL);
+    goto vma_found;
+  }
 
-	vma = find_vma(mm, uaddr);
-
-	if (!vma) {
-		pr_err("PVCS TLS vma not found for task %s\n", tsk->comm);
-		ret = -ENOENT;
-		goto out_unlock;
-	}
-
-	ret = do_munmap(mm, uaddr, PAGE_SIZE, NULL);
-
-	if (ret) {
-		pr_err("Failed to unmap PVCS TLS vma for task %s: %d\n",
-		       tsk->comm, ret);
-		goto out_unlock;
-	}
 	vma = vm_area_alloc(mm);
 	vma->vm_start = uaddr;
 	vma->vm_end = uaddr + PAGE_SIZE;
-	vm_flags_set(vma, VM_READ | VM_WRITE | VM_MAYREAD | VM_MAYWRITE |
-				  VM_DONTEXPAND | VM_SHARED | VM_PFNMAP);
+	vm_flags_set(vma, VM_READ | VM_MAYREAD | VM_WRITE | VM_MAYWRITE | VM_DONTEXPAND | VM_MAYSHARE | VM_SHARED | VM_NORESERVE | VM_DONTDUMP);
 	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
 	BUG_ON(insert_vm_struct(mm, vma) < 0);
-	BUG_ON(remap_pfn_range(vma, uaddr, pfn, PAGE_SIZE, vma->vm_page_prot) < 0);
-	flush_tlb_one_user(uaddr);
-out_unlock:
-  preempt_enable();
+  flush_tlb_all();
+
+vma_found:
+	ret = remap_pfn_range(vma, uaddr, pfn, PAGE_SIZE, vma->vm_page_prot);
+  local_irq_enable();
 	mmap_write_unlock(mm);
 	mmput(mm);
 	BUG_ON(ret);

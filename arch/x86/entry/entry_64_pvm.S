@@ -141,6 +141,17 @@ SYM_INNER_LABEL(pvm_restore_regs_and_return_to_usermode, SYM_L_GLOBAL)
 	movq	%rcx, PER_CPU_VAR(pvm_vcpu_struct + PVCS_rcx)
 	movq	%r11, PER_CPU_VAR(pvm_vcpu_struct + PVCS_r11)
 
+	movq	PER_CPU_VAR(pcpu_hot + X86_current_task), %rcx
+  movq  TASK_pvcs(%rcx), %r11
+  cmpq  $0, %r11
+  je    .Luretpoline_no_pvcs
+  orq   $RUNPV_USER_GSBASE_MAGIC, %r11
+.Luretpoline_no_pvcs:
+  movq  %r11, PER_CPU_VAR(pvm_vcpu_struct + PVCS_user_gsbase)
+  xorq  %r11, %r11
+  movl TASK_pid(%rcx), %r11d
+  movq  %r11, PER_CPU_VAR(pvm_vcpu_struct + PVCS_pid)
+
 	/* Copy the IRET frame to the PVM CPU structure. */
 	movq	1*8(%rsp), %rcx		/* RIP */
 	movq	%rcx, PER_CPU_VAR(pvm_vcpu_struct + PVCS_rip)
@@ -160,6 +171,7 @@ SYM_INNER_LABEL(pvm_restore_regs_and_return_to_usermode, SYM_L_GLOBAL)
 	STACKLEAK_ERASE_NOCLOBBER
 
 	addq	$6*8, %rsp
+/* FIXME: Seems like user_gsbase is not synced correctly. Hypervisor should save */
 SYM_INNER_LABEL(pvm_retu_rip_shim, SYM_L_GLOBAL)
   orq $SWITCH_FLAGS_IRETU, PER_CPU_VAR(pvm_vcpu_struct + PVCS_switch_flags)
   ANNOTATE_NOENDBR
@@ -204,6 +216,17 @@ SYM_INNER_LABEL(pvm_restore_regs_and_return_to_kernel, SYM_L_GLOBAL)
 	/* Copy %rcx, %r11 to the PVM CPU structure. */
 	movq	%rcx, PER_CPU_VAR(pvm_vcpu_struct + PVCS_rcx)
 	movq	%r11, PER_CPU_VAR(pvm_vcpu_struct + PVCS_r11)
+
+	movq	PER_CPU_VAR(pcpu_hot + X86_current_task), %rcx
+  movq  TASK_pvcs(%rcx), %r11
+  cmpq  $0, %r11
+  je    .Lsretpoline_no_pvcs
+  orq   $RUNPV_USER_GSBASE_MAGIC, %r11
+.Lsretpoline_no_pvcs:
+  movq  %r11, PER_CPU_VAR(pvm_vcpu_struct + PVCS_user_gsbase)
+  xorq  %r11, %r11
+  movl TASK_pid(%rcx), %r11d
+  movq  %r11, PER_CPU_VAR(pvm_vcpu_struct + PVCS_pid)
 
 	/* Copy the IRET frame to the PVM CPU structure. */
 	movq	1*8(%rsp), %rcx		/* RIP */
