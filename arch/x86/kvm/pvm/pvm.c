@@ -939,6 +939,7 @@ static void pvm_set_host_cr3_for_guest_without_host_pcid(struct vcpu_pvm *pvm)
 	this_cpu_write(cpu_tss_rw.tss_ex.enter_cr3, root_hpa);
 	this_cpu_write(cpu_tss_rw.tss_ex.smod_cr3, root_hpa);
 	this_cpu_write(cpu_tss_rw.tss_ex.umod_cr3, root_hpa);
+  pvm->switch_flags |= SWITCH_FLAGS_NO_DS_CR3;
 }
 
 static void pvm_set_host_cr3_for_hypervisor(struct vcpu_pvm *pvm)
@@ -2849,9 +2850,14 @@ static noinstr void pvm_vcpu_run_noinstr(struct kvm_vcpu *vcpu)
 
 	// Get the guest registers from the host sp0 stack.
 	save_regs(vcpu, ret_regs);
+  pvm_read_guest_gs_base(pvm);
 
 	if(is_smod(pvm))
 		__pvm_set_supervisor_rsp(pvm, kvm_rsp_read(vcpu));
+  else {
+    if(tss_ex->pvcs)
+      tss_ex->pvcs->user_gsbase = pvm->segments[VCPU_SREG_GS].base;
+  }
 
 	pvm->exit_vector = (ret_regs->orig_ax >> 32);
 	pvm->exit_error_code = (u32)ret_regs->orig_ax;

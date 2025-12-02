@@ -39,6 +39,11 @@ static void __used common(void)
 	OFFSET(TASK_stack_canary, task_struct, stack_canary);
 #endif
 
+#ifdef CONFIG_RUNPV_GUEST
+  OFFSET(TASK_pvcs, task_struct, pvcs_tls);
+  OFFSET(TASK_pid, task_struct, pid);
+#endif
+
 	BLANK();
 	OFFSET(pbe_address, pbe, address);
 	OFFSET(pbe_orig_address, pbe, orig_address);

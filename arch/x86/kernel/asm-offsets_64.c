@@ -102,6 +102,7 @@ int main(void)
 	ENTRY(user_rsp);
 	ENTRY(intr_mask);
 	ENTRY(yui_entry);
+  ENTRY(pid);
 #endif
 	BLANK();
 #undef ENTRY
