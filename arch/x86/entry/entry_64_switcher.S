@@ -212,8 +212,18 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 	sysretq
 
 .L_switcher_irets:
-  popq %rdi
   movq TSS_extra(pvcs), %rcx
+
+  testq $((SWITCH_FLAGS_IRQ_WIN | SWITCH_FLAGS_NMI_WIN)), %rdi
+  jz   .L_switcher_irets_no_win
+
+  andq $(~SWITCH_FLAGS_IRETS), PVCS_switch_flags(%rcx)
+  movq TSS_extra(rets_rip), %r11
+  movq %r11, RIP-ORIG_RAX(%rsp)
+	jmp .L_switcher_return_to_hypervisor
+
+.L_switcher_irets_no_win:
+  popq %rdi
 
   movq PVCS_rip(%rcx), %r11
   movq %r11, RIP-RIP(%rsp)
@@ -256,9 +266,19 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
   popq %r11
   popq %rcx
   iretq
+
 .L_switcher_iretu:
-  popq %rdi
   movq TSS_extra(pvcs), %rcx
+  testq $((SWITCH_FLAGS_IRQ_WIN | SWITCH_FLAGS_NMI_WIN)), %rdi
+  jz   .L_switcher_iretu_no_win
+
+  andq $(~SWITCH_FLAGS_IRETU), PVCS_switch_flags(%rcx)
+  movq TSS_extra(retu_rip), %r11
+  movq %r11, RIP-ORIG_RAX(%rsp)
+	jmp .L_switcher_return_to_hypervisor
+
+.L_switcher_iretu_no_win:
+  popq %rdi
 
   movq PVCS_rip(%rcx), %r11
   movq %r11, RIP-RIP(%rsp)

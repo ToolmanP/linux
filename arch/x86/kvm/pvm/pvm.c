@@ -939,7 +939,6 @@ static void pvm_set_host_cr3_for_guest_without_host_pcid(struct vcpu_pvm *pvm)
 	this_cpu_write(cpu_tss_rw.tss_ex.enter_cr3, root_hpa);
 	this_cpu_write(cpu_tss_rw.tss_ex.smod_cr3, root_hpa);
 	this_cpu_write(cpu_tss_rw.tss_ex.umod_cr3, root_hpa);
-  pvm->switch_flags |= SWITCH_FLAGS_NO_DS_CR3;
 }
 
 static void pvm_set_host_cr3_for_hypervisor(struct vcpu_pvm *pvm)
@@ -2813,6 +2812,7 @@ static noinstr void pvm_vcpu_run_noinstr(struct kvm_vcpu *vcpu)
 	// Prepare context for direct switching.
 	tss_ex->pvcs = pvm->pvcs_gpc.khva;
 	tss_ex->retu_rip = pvm->msr_retu_rip_plus2;
+  tss_ex->rets_rip = pvm->msr_rets_rip_plus2;
 	tss_ex->smod_entry = pvm->msr_lstar;
 	tss_ex->smod_gsbase = pvm->msr_kernel_gs_base;
 

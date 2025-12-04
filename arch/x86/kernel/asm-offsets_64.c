@@ -71,6 +71,7 @@ int main(void)
 	ENTRY(umod_cr3);
 	ENTRY(pvcs);
 	ENTRY(retu_rip);
+	ENTRY(rets_rip);
 	ENTRY(smod_entry);
 	ENTRY(smod_gsbase);
 	ENTRY(smod_rsp);

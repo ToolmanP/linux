@@ -123,6 +123,7 @@ struct tss_extra {
 	 */
 	struct pvm_vcpu_struct *pvcs;
 	unsigned long retu_rip;
+  unsigned long rets_rip;
 	unsigned long smod_entry;
 	unsigned long smod_gsbase;
 	unsigned long smod_rsp;
