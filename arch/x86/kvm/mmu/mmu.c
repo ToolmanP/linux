@@ -1092,6 +1092,7 @@ static struct kvm_rmap_head *gfn_to_rmap(gfn_t gfn, int level,
 	return &slot->arch.rmap[level - PG_LEVEL_4K][idx];
 }
 
+
 static void rmap_remove(struct kvm *kvm, u64 *spte)
 {
 	struct kvm_memslots *slots;
@@ -3789,6 +3790,7 @@ static int mmu_first_shadow_root_alloc(struct kvm *kvm)
 			r = memslot_rmap_alloc(slot, slot->npages);
 			if (r)
 				goto out_unlock;
+      memslot_kpfn_elems_alloc(slot, slot->npages);
 			r = kvm_page_track_write_tracking_alloc(slot);
 			if (r)
 				goto out_unlock;

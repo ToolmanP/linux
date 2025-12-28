@@ -12693,6 +12693,21 @@ int memslot_rmap_alloc(struct kvm_memory_slot *slot, unsigned long npages)
 	return 0;
 }
 
+
+int memslot_kpfn_elems_alloc(struct kvm_memory_slot *slot, unsigned long npages)
+{
+  unsigned long i; 
+  slot->arch.kpfn_elems = __vcalloc(npages,
+      sizeof(*slot->arch.kpfn_elems), GFP_KERNEL_ACCOUNT);
+
+  for(i = 0; i < npages; i++) {
+    slot->arch.kpfn_elems[i].pfn = KVM_PFN_ERR_FAULT;
+    spin_lock_init(&slot->arch.kpfn_elems[i].lock);
+  }
+
+  return 0;
+}
+
 static int kvm_alloc_memslot_metadata(struct kvm *kvm,
 				      struct kvm_memory_slot *slot)
 {
@@ -12710,6 +12725,7 @@ static int kvm_alloc_memslot_metadata(struct kvm *kvm,
 		r = memslot_rmap_alloc(slot, npages);
 		if (r)
 			return r;
+    memslot_kpfn_elems_alloc(slot, npages);
 	}
 
 	for (i = 1; i < KVM_NR_PAGE_SIZES; ++i) {

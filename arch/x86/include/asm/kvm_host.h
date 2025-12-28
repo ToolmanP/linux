@@ -405,6 +405,7 @@ union kvm_cpu_role {
 
 struct kvm_rmap_head {
 	unsigned long val;
+  bool kernel;
 };
 
 struct kvm_pio_request {
@@ -1034,9 +1035,15 @@ struct kvm_lpage_info {
 	int disallow_lpage;
 };
 
+struct kvm_kpfn_element {
+  kvm_pfn_t pfn;
+  spinlock_t lock;
+};
+
 struct kvm_arch_memory_slot {
 	struct kvm_rmap_head *rmap[KVM_NR_PAGE_SIZES];
 	struct kvm_lpage_info *lpage_info[KVM_NR_PAGE_SIZES - 1];
+  struct kvm_kpfn_element *kpfn_elems;
 	unsigned short *gfn_write_track;
 };
 
@@ -2261,6 +2268,7 @@ static inline int kvm_cpu_get_apicid(int mps_cpu)
 }
 
 int memslot_rmap_alloc(struct kvm_memory_slot *slot, unsigned long npages);
+int memslot_kpfn_elems_alloc(struct kvm_memory_slot *slot, unsigned long npages);
 
 #define KVM_CLOCK_VALID_FLAGS						\
 	(KVM_CLOCK_TSC_STABLE | KVM_CLOCK_REALTIME | KVM_CLOCK_HOST_TSC)

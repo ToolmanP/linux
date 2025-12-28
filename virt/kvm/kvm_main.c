@@ -2736,6 +2736,51 @@ exit:
 	return pfn;
 }
 
+
+
+/* MUST HOLD THE MMU LOCK TO INVOKE THIS*/
+kvm_pfn_t __gfn_to_kpfn_memslot(struct kvm_memory_slot *slot, gfn_t gfn,
+    bool atomic, bool interruptible,bool write_fault,
+    bool *writable, hva_t *hva)
+{
+  struct kvm_kpfn_element *elem = &slot->arch.kpfn_elems[gfn-slot->base_gfn];
+  unsigned long flags, gfp;
+  struct page *page;
+  kvm_pfn_t pfn;
+  BUG_ON(atomic && interruptible);
+
+  gfp = atomic ? GFP_ATOMIC : GFP_KERNEL;
+
+  if(atomic) {
+    spin_lock_irqsave(&elem->lock, flags);
+  } else {
+    spin_lock(&elem->lock);
+  }
+  if(elem -> pfn == KVM_PFN_ERR_FAULT) {
+    page = alloc_page(gfp);
+    BUG_ON(!page);
+    elem->pfn = page ? page_to_pfn(page) : KVM_PFN_ERR_FAULT;
+  } else {
+    page = pfn_to_page(elem->pfn);
+  }
+
+  get_page(page);
+  pfn = elem->pfn;
+
+  if(writable)
+    *writable = true;
+
+  if(hva)
+    *hva = (hva_t) page_address(page);
+
+  if(atomic) {
+    spin_unlock_irqrestore(&elem->lock, flags);
+  } else {
+    spin_unlock(&elem->lock);
+  }
+  return pfn;
+}
+
 kvm_pfn_t __gfn_to_pfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn,
 			       bool atomic, bool interruptible, bool *async,
 			       bool write_fault, bool *writable, hva_t *hva)
