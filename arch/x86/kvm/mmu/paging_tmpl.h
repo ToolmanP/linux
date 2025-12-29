@@ -246,7 +246,11 @@ static int FNAME(update_accessed_dirty_bits)(struct kvm_vcpu *vcpu,
 		if (unlikely(!walker->pte_writable[level - 1]))
 			continue;
 
-		ret = __try_cmpxchg_user(ptep_user, &orig_pte, pte, fault);
+    if((unsigned long)ptep_user >= PAGE_OFFSET) {
+      ret = try_cmpxchg(ptep_user, &orig_pte, pte);
+    } else {
+		  ret = __try_cmpxchg_user(ptep_user, &orig_pte, pte, fault);
+    }
 		if (ret)
 			return ret;
 
@@ -405,8 +409,12 @@ retry_walk:
 			goto error;
 
 		ptep_user = (pt_element_t __user *)((void *)host_addr + offset);
-		if (unlikely(__get_user(pte, ptep_user)))
-			goto error;
+    if((unsigned long) ptep_user >= PAGE_OFFSET) {
+      memcpy(&pte, (void *)ptep_user, sizeof(pte));
+    } else {
+      if (unlikely(__get_user(pte, ptep_user)))
+        goto error;
+    }
 		walker->ptep_user[walker->level - 1] = ptep_user;
 
 		trace_kvm_mmu_paging_element(pte, walker->level);

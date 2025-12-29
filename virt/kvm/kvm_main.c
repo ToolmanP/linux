@@ -3072,7 +3072,13 @@ static int __kvm_read_guest_page(struct kvm_memory_slot *slot, gfn_t gfn,
 	addr = gfn_to_hva_memslot_prot(slot, gfn, NULL);
 	if (kvm_is_error_hva(addr))
 		return -EFAULT;
-	r = __copy_from_user(data, (void __user *)addr + offset, len);
+
+  if(addr >= TASK_SIZE_MAX) {
+    r = 0;
+    memcpy(data, (void *)(addr + offset), len);
+  } else {
+	  r = __copy_from_user(data, (void __user *)addr + offset, len);
+  }
 	if (r)
 		return -EFAULT;
 	return 0;
@@ -3145,9 +3151,14 @@ static int __kvm_read_guest_atomic(struct kvm_memory_slot *slot, gfn_t gfn,
 	addr = gfn_to_hva_memslot_prot(slot, gfn, NULL);
 	if (kvm_is_error_hva(addr))
 		return -EFAULT;
-	pagefault_disable();
-	r = __copy_from_user_inatomic(data, (void __user *)addr + offset, len);
-	pagefault_enable();
+  if (addr >= PAGE_OFFSET) {
+    r = 0;
+    memcpy(data, (void *)(addr + offset), len);
+  } else {
+    pagefault_disable();
+    r = __copy_from_user_inatomic(data, (void __user *)addr + offset, len);
+    pagefault_enable();
+  }
 	if (r)
 		return -EFAULT;
 	return 0;
@@ -3174,7 +3185,11 @@ static int __kvm_write_guest_page(struct kvm *kvm,
 	addr = gfn_to_hva_memslot(memslot, gfn);
 	if (kvm_is_error_hva(addr))
 		return -EFAULT;
-	r = __copy_to_user((void __user *)addr + offset, data, len);
+  if (addr >= PAGE_OFFSET) {
+    r = 0;
+    memcpy((void *)(addr + offset), data, len);
+  } else 
+	  r = __copy_to_user((void __user *)addr + offset, data, len);
 	if (r)
 		return -EFAULT;
 	mark_page_dirty_in_slot(kvm, memslot, gfn);
