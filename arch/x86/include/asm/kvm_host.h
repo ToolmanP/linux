@@ -403,9 +403,15 @@ union kvm_cpu_role {
 	};
 };
 
+enum kvm_rmap_type {
+  RMAP_EMPTY = 0,
+  RMAP_KERNEL,
+  RMAP_USER,
+};
+
 struct kvm_rmap_head {
 	unsigned long val;
-  bool kernel;
+  enum kvm_rmap_type type;
 };
 
 struct kvm_pio_request {

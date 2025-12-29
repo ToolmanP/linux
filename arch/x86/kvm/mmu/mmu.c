@@ -116,7 +116,7 @@ static int max_huge_page_level __read_mostly;
 static int tdp_root_level __read_mostly;
 static int max_tdp_level __read_mostly;
 
-#define PTE_PREFETCH_NUM		8
+#define PTE_PREFETCH_NUM		1
 
 #include <trace/events/kvm.h>
 
@@ -996,8 +996,10 @@ static void pte_list_desc_remove_entry(struct kvm *kvm,
 	 * nullify the rmap head to mark the list as emtpy, else point the rmap
 	 * head at the next descriptor, i.e. the new head.
 	 */
-	if (!head_desc->more)
+	if (!head_desc->more) {
 		rmap_head->val = 0;
+    rmap_head->type = RMAP_EMPTY;
+  }
 	else
 		rmap_head->val = (unsigned long)head_desc->more | 1;
 	mmu_free_pte_list_desc(head_desc);
@@ -1067,6 +1069,7 @@ static bool kvm_zap_all_rmap_sptes(struct kvm *kvm,
 out:
 	/* rmap_head is meaningless now, remember to reset it */
 	rmap_head->val = 0;
+  rmap_head->type = RMAP_EMPTY;
 	return true;
 }
 
@@ -1092,6 +1095,36 @@ static struct kvm_rmap_head *gfn_to_rmap(gfn_t gfn, int level,
 	return &slot->arch.rmap[level - PG_LEVEL_4K][idx];
 }
 
+void kvm_mark_gfn(const struct kvm_memory_slot *slot, gfn_t gfn, unsigned long access)
+{
+  unsigned long idx;
+  int i;
+  enum kvm_rmap_type type = (access & ACC_RUNPV_MASK) ? RMAP_KERNEL : RMAP_USER;
+
+  /* Check whether the gfn is already marked */
+  for (i = PG_LEVEL_4K; i <= KVM_NR_PAGE_SIZES; i++) {
+    idx = gfn_to_index(gfn, slot->base_gfn, i);
+    if(slot->arch.rmap[i - PG_LEVEL_4K][idx].type != RMAP_EMPTY)
+      return;
+  }
+
+  /* If not, use the called access to mark all levels */
+  for (i = PG_LEVEL_4K; i <= KVM_NR_PAGE_SIZES; i++) {
+    idx = gfn_to_index(gfn, slot->base_gfn, i);
+    slot->arch.rmap[i - PG_LEVEL_4K][idx].type = type;
+  }
+}
+
+bool kvm_gfn_can_use_kpfn(const struct kvm_memory_slot *slot, gfn_t gfn) {
+  unsigned long idx;
+  int i;
+  for (i = PG_LEVEL_4K; i <= KVM_NR_PAGE_SIZES; i++) {
+    idx = gfn_to_index(gfn, slot->base_gfn, i);
+    if(slot->arch.rmap[i - PG_LEVEL_4K][idx].type != RMAP_KERNEL)
+      return false;
+  }
+  return true;
+}
 
 static void rmap_remove(struct kvm *kvm, u64 *spte)
 {
@@ -1654,6 +1687,7 @@ static void __rmap_add(struct kvm *kvm,
 
 	rmap_head = gfn_to_rmap(gfn, sp->role.level, slot);
 	rmap_count = pte_list_add(cache, spte, rmap_head);
+  kvm_mark_gfn(slot, gfn, access);
 
 	if (rmap_count > kvm->stat.max_mmu_rmap_size)
 		kvm->stat.max_mmu_rmap_size = rmap_count;
