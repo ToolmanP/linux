@@ -1625,9 +1625,8 @@ static struct folio *shmem_alloc_folio(gfp_t gfp,
 	struct mempolicy *mpol;
 	pgoff_t ilx;
 	struct page *page;
-
 	mpol = shmem_get_pgoff_policy(info, index, 0, &ilx);
-	page = alloc_pages_mpol(gfp, 0, mpol, ilx, numa_node_id());
+	page = alloc_pages_mpol(gfp | __GFP_RUNPV, 0, mpol, ilx, numa_node_id());
 	mpol_cond_put(mpol);
 
 	return (struct folio *)page;

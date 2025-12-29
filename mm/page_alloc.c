@@ -1174,7 +1174,8 @@ static __always_inline bool free_pages_prepare(struct page *page,
 
 	debug_pagealloc_unmap_pages(page, 1 << order);
 
-	runpv_free_page_hook(page, order);
+  if(TestClearPageRunpv(page))
+	  runpv_free_page_hook(page, order);
 
 	return true;
 }
@@ -1534,14 +1535,13 @@ inline void post_alloc_hook(struct page *page, unsigned int order,
 			page_kasan_tag_reset(page + i);
 	}
 
-	// If the page is a kernel page table, initialize it to trigger shadow paging.
-	if (init && (gfp_flags & __GFP_PT))
-		kernel_init_pages(page, 1 << order);
+  BUG_ON((gfp_flags & __GFP_RUNPV) && (gfp_flags && __GFP_PT));
 
-	runpv_alloc_page_hook(page, order, gfp_flags);
+  /* RUNPV: (fast) hypercall to prefault shadow pages (we manually tag those interested) */
+  if (gfp_flags & __GFP_RUNPV)
+	  runpv_alloc_page_hook(page, order, gfp_flags);
 
-	/* If memory is still not initialized, initialize it now. */
-	if (init && !(gfp_flags & __GFP_PT))
+	if (init)
 		kernel_init_pages(page, 1 << order);
 
 	set_page_owner(page, order, gfp_flags);

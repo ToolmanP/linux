@@ -58,6 +58,8 @@ typedef unsigned int __bitwise gfp_t;
 #else
 #define ___GFP_NOLOCKDEP	0
 #endif
+
+#define ___GFP_RUNPV      0x8000000u
 /* If the above are modified, __GFP_BITS_SHIFT may need updating */
 
 /*
@@ -74,6 +76,7 @@ typedef unsigned int __bitwise gfp_t;
 #define GFP_ZONEMASK	(__GFP_DMA|__GFP_HIGHMEM|__GFP_DMA32|__GFP_MOVABLE)
 
 #define __GFP_PT	((__force gfp_t)___GFP_PT)
+#define __GFP_RUNPV ((__force gfp_t)___GFP_RUNPV)
 
 /**
  * DOC: Page mobility and placement hints

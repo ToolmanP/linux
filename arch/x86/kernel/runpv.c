@@ -104,135 +104,25 @@ __visible noinstr bool do_syscall_64_runpv(struct pt_regs *regs, int nr)
 }
 
 #ifdef CONFIG_RUNPV_MEM_PARAVIRT
-#define HOST_PAGE_NONE		(0)
-#define HOST_PAGE_NORMAL	(1)
-#define HOST_PAGE_PT		(2)
-
-#define runpv_set_PT_DEBUG 0
-static inline int pte_is_host_page_normal(pte_t pte)
-{
-	if (pte.pte & _PAGE_PRESENT) {
-		struct page *page = pte_page(pte);
-		return page->host_page == HOST_PAGE_NORMAL;
-	}
-	return 1;
-}
-
-static inline int runpv_hc_set_pte(pte_t *ptep, pte_t pte)
-{
-	for (;;) {
-		long ret = runpv_hypercall2(RUNPV_HC_SET_PTE, (long)ptep, (long)pte.pte);
-		if (ret == -EAGAIN) {
-			continue;
-		} else {
-			return (int)ret;
-		}
-	}
-}
-
-static inline int runpv_hc_bind_host_page(long gfn, int order, unsigned long page)
-{
-	for (;;) {
-		long ret = runpv_hypercall3(RUNPV_HC_BIND_HOST_PAGE, gfn, order, page);
-		if (ret == -EAGAIN) {
-			continue;
-		} else if (ret == -ENODATA) {
-			pvm_hypercall0(PVM_HC_SYNC_PAGES);
-		} else {
-			return (int)ret;
-		}
-	}
-}
-
-static inline int runpv_hc_unbind_host_page(long gfn, unsigned long page)
-{
-	for (;;) {
-		long ret = runpv_hypercall2(RUNPV_HC_UNBIND_HOST_PAGE, gfn, page);
-		if (ret == -EAGAIN) {
-			continue;
-		} else if (ret == -ENODATA) {
-			pvm_hypercall0(PVM_HC_SYNC_FREE_PAGES);
-		} else {
-			return (int)ret;
-		}
-	}
-}
-
-static inline int runpv_hc_mark_page_pt(long gfn, unsigned long page, int mark)
-{
-	long ret;
-	for (;;) {
-		ret = runpv_hypercall3(RUNPV_HC_MARK_PAGE_PT, gfn, page, mark);
-		if (ret == -EAGAIN) {
-			continue;
-		} else {
-			return (int)ret;
-		}
-	}
-}
-
-static int split_vmm_enable = 0;
-
-SYSCALL_DEFINE0(split_vmm_enable)
-{
-	split_vmm_enable = 1;
-	return 0;
-}
-
 
 void runpv_alloc_page_hook(struct page *page, unsigned int order, gfp_t gfp_flags)
 {
-	int ret;
-	if (order) {
-		return;
-	}
-	BUG_ON(page->host_page != HOST_PAGE_NONE);
-	if (gfp_flags & __GFP_PT) {
-		ret = runpv_hc_mark_page_pt(page_to_pfn(page), (unsigned long)page_to_virt(page), 1);
-		page->host_page = HOST_PAGE_PT;
-	} else if (split_vmm_enable) {
-		ret = runpv_hc_bind_host_page(page_to_pfn(page), order, (long) page_to_virt(page));
-		if (ret == 0) {
-			page->host_page = HOST_PAGE_NORMAL;
-		}
-	}
+  SetPageRunpv(page);
 }
 
 EXPORT_SYMBOL(runpv_alloc_page_hook);
 
 void runpv_free_page_hook(struct page *page, unsigned int order)
 {
-	int ret;
-	if (page->host_page == HOST_PAGE_PT) {
-		ret = runpv_hc_mark_page_pt(page_to_pfn(page), (unsigned long)page_to_virt(page), 0);
-		page->host_page = HOST_PAGE_NONE;
-	} else if (page->host_page == HOST_PAGE_NORMAL) {
-		ret = runpv_hc_unbind_host_page(page_to_pfn(page), (unsigned long)page_to_virt(page));
-		page->host_page = HOST_PAGE_NONE;
-	}
+
 }
+
 EXPORT_SYMBOL(runpv_free_page_hook);
-
-
-static int runpv_try_set_pte(pte_t *pte, pte_t entry)
-{
-	int ret;
-	if (!split_vmm_enable) return -1;
-	if (!pte_is_host_page_normal(*pte)) return -1;
-	if (!pte_is_host_page_normal(entry)) return -1;
-	ret = runpv_hc_set_pte(pte, entry);
-	if (ret == 0) {
-		BUG_ON(pte->pte != entry.pte);
-	}
-	return ret;
-}
 
 
 static void runpv_set_pte(pte_t *ptep, pte_t pteval)
 {
-	if (runpv_try_set_pte(ptep, pteval)) {
-		native_set_pte(ptep, pteval);
-	}
+	native_set_pte(ptep, pteval);
 }
 
 static void runpv_set_pmd(pmd_t *pmdp, pmd_t pmdval)
@@ -254,25 +144,16 @@ static void runpv_set_p4d(p4d_t *p4dp, p4d_t p4dval)
 
 static void runpv_flush_tlb_user(void)
 {
-#ifdef CONFIG_RUNPV_MEM_PARAVIRT
-	runpv_hypercall0(RUNPV_HC_TLB_FLUSH_CURRENT);
-#endif
 	pvm_hypercall0(PVM_HC_TLB_FLUSH_CURRENT);
 }
 
 static void runpv_flush_tlb_kernel(void)
 {
-#ifdef CONFIG_RUNPV_MEM_PARAVIRT
-	runpv_hypercall0(RUNPV_HC_TLB_FLUSH);
-#endif
 	pvm_hypercall0(PVM_HC_TLB_FLUSH);
 }
 
 static void runpv_flush_tlb_one_user(unsigned long addr)
 {
-#ifdef CONFIG_RUNPV_MEM_PARAVIRT
-	runpv_hypercall1(RUNPV_HC_TLB_INVLPG, addr);
-#endif
 	pvm_hypercall1(PVM_HC_TLB_INVLPG, addr);
 }
 
