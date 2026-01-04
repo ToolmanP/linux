@@ -1081,6 +1081,7 @@ static __always_inline bool free_pages_prepare(struct page *page,
 	bool skip_kasan_poison = should_skip_kasan_poison(page, fpi_flags);
 	bool init = want_init_on_free();
 	bool compound = PageCompound(page);
+  bool runpv = TestClearPageRunpv(page);
 
 	VM_BUG_ON_PAGE(PageTail(page), page);
 
@@ -1174,7 +1175,7 @@ static __always_inline bool free_pages_prepare(struct page *page,
 
 	debug_pagealloc_unmap_pages(page, 1 << order);
 
-  if(TestClearPageRunpv(page))
+  if(runpv)
 	  runpv_free_page_hook(page, order);
 
 	return true;
@@ -1493,6 +1494,12 @@ inline void post_alloc_hook(struct page *page, unsigned int order,
 	set_page_private(page, 0);
 	set_page_refcounted(page);
 
+  /* RUNPV: (fast) hypercall to prefault shadow pages (we manually tag those interested) */
+  if (gfp_flags & __GFP_RUNPV)
+	  runpv_alloc_page_hook(page, order);
+
+  BUG_ON((gfp_flags & __GFP_RUNPV) && (gfp_flags & __GFP_PT));
+
 	arch_alloc_page(page, order);
 	debug_pagealloc_map_pages(page, 1 << order);
 
@@ -1534,12 +1541,6 @@ inline void post_alloc_hook(struct page *page, unsigned int order,
 		for (i = 0; i != 1 << order; ++i)
 			page_kasan_tag_reset(page + i);
 	}
-
-  BUG_ON((gfp_flags & __GFP_RUNPV) && (gfp_flags && __GFP_PT));
-
-  /* RUNPV: (fast) hypercall to prefault shadow pages (we manually tag those interested) */
-  if (gfp_flags & __GFP_RUNPV)
-	  runpv_alloc_page_hook(page, order, gfp_flags);
 
 	if (init)
 		kernel_init_pages(page, 1 << order);

@@ -136,6 +136,7 @@ enum pageflags {
 	PG_arch_2,
 	PG_arch_3,
 #endif
+  PG_runpv,
 	__NR_PAGEFLAGS,
 
 	PG_readahead = PG_reclaim,
@@ -192,7 +193,6 @@ enum pageflags {
 	PG_has_hwpoisoned = PG_error,
 	PG_hugetlb = PG_active,
 	PG_large_rmappable = PG_workingset, /* anon or file-backed */
-  PG_runpv,
 };
 
 #define PAGEFLAGS_MASK		((1UL << NR_PAGEFLAGS) - 1)
@@ -521,8 +521,9 @@ PAGEFLAG(Reclaim, reclaim, PF_NO_TAIL)
 PAGEFLAG(Readahead, readahead, PF_NO_COMPOUND)
 	TESTCLEARFLAG(Readahead, readahead, PF_NO_COMPOUND)
 
-PAGEFLAG(Runpv, runpv, PF_NO_COMPOUND)
-  TESTSCFLAG(Runpv, runpv, PF_NO_COMPOUND)
+PAGEFLAG(Runpv, runpv, PF_NO_TAIL)
+  TESTCLEARFLAG(Runpv, runpv, PF_NO_TAIL)
+
 
 #ifdef CONFIG_HIGHMEM
 /*

@@ -1615,7 +1615,6 @@ static struct folio *shmem_alloc_hugefolio(gfp_t gfp,
 	mpol = shmem_get_pgoff_policy(info, index, HPAGE_PMD_ORDER, &ilx);
 	page = alloc_pages_mpol(gfp, HPAGE_PMD_ORDER, mpol, ilx, numa_node_id());
 	mpol_cond_put(mpol);
-
 	return page_rmappable_folio(page);
 }
 
@@ -1626,7 +1625,7 @@ static struct folio *shmem_alloc_folio(gfp_t gfp,
 	pgoff_t ilx;
 	struct page *page;
 	mpol = shmem_get_pgoff_policy(info, index, 0, &ilx);
-	page = alloc_pages_mpol(gfp | __GFP_RUNPV, 0, mpol, ilx, numa_node_id());
+	page = alloc_pages_mpol(gfp, 0, mpol, ilx, numa_node_id());
 	mpol_cond_put(mpol);
 
 	return (struct folio *)page;

@@ -12657,11 +12657,24 @@ static void memslot_rmap_free(struct kvm_memory_slot *slot)
 	}
 }
 
+static void memslot_kpfn_elems_free(struct kvm_memory_slot *slot)
+{
+  unsigned long i;
+  kvm_pfn_t pfn;
+  for (i = 0; i < slot->npages; ++i) {
+    pfn = slot->arch.kpfn_elems[i].pfn;
+    if(pfn != KVM_PFN_ERR_FAULT)
+      __free_page(pfn_to_page(pfn));
+  }
+  kvfree(slot->arch.kpfn_elems);
+}
+
 void kvm_arch_free_memslot(struct kvm *kvm, struct kvm_memory_slot *slot)
 {
 	int i;
 
 	memslot_rmap_free(slot);
+  memslot_kpfn_elems_free(slot);
 
 	for (i = 1; i < KVM_NR_PAGE_SIZES; ++i) {
 		kvfree(slot->arch.lpage_info[i - 1]);
@@ -12698,7 +12711,7 @@ int memslot_kpfn_elems_alloc(struct kvm_memory_slot *slot, unsigned long npages)
 {
   unsigned long i; 
   slot->arch.kpfn_elems = __vcalloc(npages,
-      sizeof(*slot->arch.kpfn_elems), GFP_KERNEL_ACCOUNT);
+      sizeof(slot->arch.kpfn_elems[0]), GFP_KERNEL_ACCOUNT);
 
   for(i = 0; i < npages; i++) {
     slot->arch.kpfn_elems[i].pfn = KVM_PFN_ERR_FAULT;
@@ -12765,6 +12778,7 @@ static int kvm_alloc_memslot_metadata(struct kvm *kvm,
 	return 0;
 
 out_free:
+  memslot_kpfn_elems_free(slot);
 	memslot_rmap_free(slot);
 
 	for (i = 1; i < KVM_NR_PAGE_SIZES; ++i) {

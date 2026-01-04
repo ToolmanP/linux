@@ -1193,6 +1193,10 @@ kvm_pfn_t gfn_to_pfn_memslot_atomic(const struct kvm_memory_slot *slot, gfn_t gf
 kvm_pfn_t __gfn_to_pfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn,
 			       bool atomic, bool interruptible, bool *async,
 			       bool write_fault, bool *writable, hva_t *hva);
+kvm_pfn_t __gfn_to_kpfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn,
+    bool atomic, bool interruptible,bool write_fault,
+    bool *writable, hva_t *hva);
+int kvm_free_kpfn(const struct kvm_memory_slot *slot, gfn_t gfn, bool atomic, bool interruptible);
 
 void kvm_release_pfn_clean(kvm_pfn_t pfn);
 void kvm_release_pfn_dirty(kvm_pfn_t pfn);
@@ -2335,4 +2339,7 @@ static inline void kvm_account_pgtable_pages(void *virt, int nr)
 /* Max number of entries allowed for each kvm dirty ring */
 #define  KVM_DIRTY_RING_MAX_ENTRIES  65536
 
+extern bool kvm_kpfn_ready_memslot(const struct kvm_memory_slot *slot, gfn_t gfn);
+extern bool kvm_vcpu_kpfn_ready(struct kvm_vcpu *vcpu, gfn_t gfn);
+extern void runpv_mark_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order);
 #endif

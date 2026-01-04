@@ -105,16 +105,18 @@ __visible noinstr bool do_syscall_64_runpv(struct pt_regs *regs, int nr)
 
 #ifdef CONFIG_RUNPV_MEM_PARAVIRT
 
-void runpv_alloc_page_hook(struct page *page, unsigned int order, gfp_t gfp_flags)
+void runpv_alloc_page_hook(struct page *page, unsigned int order)
 {
   SetPageRunpv(page);
+  pr_info("Allocated virt page: 0x%lx\n", page_to_virt(page));
+  pvm_hypercall2(PVM_HC_MARK_KPFN, (unsigned long)page_to_pfn(page), (unsigned long)order);
 }
 
 EXPORT_SYMBOL(runpv_alloc_page_hook);
 
 void runpv_free_page_hook(struct page *page, unsigned int order)
 {
-
+  pvm_hypercall2(PVM_HC_FREE_KPFN, (unsigned long)page_to_pfn(page), (unsigned long)order);
 }
 
 EXPORT_SYMBOL(runpv_free_page_hook);

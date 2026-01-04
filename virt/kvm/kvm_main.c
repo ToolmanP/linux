@@ -2437,7 +2437,12 @@ static unsigned long __gfn_to_hva_many(const struct kvm_memory_slot *slot, gfn_t
 static unsigned long gfn_to_hva_many(struct kvm_memory_slot *slot, gfn_t gfn,
 				     gfn_t *nr_pages)
 {
-	return __gfn_to_hva_many(slot, gfn, nr_pages, true);
+  unsigned long hva;
+  if(kvm_kpfn_ready_memslot(slot, gfn))
+    __gfn_to_kpfn_memslot(slot, gfn, true, false, true, NULL, &hva);
+  else
+	  hva = __gfn_to_hva_many(slot, gfn, nr_pages, true);
+  return hva;
 }
 
 unsigned long gfn_to_hva_memslot(struct kvm_memory_slot *slot,
@@ -2470,7 +2475,12 @@ EXPORT_SYMBOL_GPL(kvm_vcpu_gfn_to_hva);
 unsigned long gfn_to_hva_memslot_prot(struct kvm_memory_slot *slot,
 				      gfn_t gfn, bool *writable)
 {
-	unsigned long hva = __gfn_to_hva_many(slot, gfn, NULL, false);
+	unsigned long hva;
+  if(kvm_kpfn_ready_memslot(slot, gfn)) {
+    __gfn_to_kpfn_memslot(slot, gfn, true, false, true, writable, &hva);
+    return hva;
+  }
+  hva = __gfn_to_hva_many(slot, gfn, NULL, false);
 
 	if (!kvm_is_error_hva(hva) && writable)
 		*writable = !memslot_is_readonly(slot);
@@ -2737,10 +2747,9 @@ exit:
 }
 
 
-
 /* MUST HOLD THE MMU LOCK TO INVOKE THIS*/
-kvm_pfn_t __gfn_to_kpfn_memslot(struct kvm_memory_slot *slot, gfn_t gfn,
-    bool atomic, bool interruptible,bool write_fault,
+kvm_pfn_t __gfn_to_kpfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn,
+    bool atomic, bool interruptible, bool write_fault,
     bool *writable, hva_t *hva)
 {
   struct kvm_kpfn_element *elem = &slot->arch.kpfn_elems[gfn-slot->base_gfn];
@@ -2749,21 +2758,23 @@ kvm_pfn_t __gfn_to_kpfn_memslot(struct kvm_memory_slot *slot, gfn_t gfn,
   kvm_pfn_t pfn;
   BUG_ON(atomic && interruptible);
 
-  gfp = atomic ? GFP_ATOMIC : GFP_KERNEL;
+  gfp = atomic ? GFP_KERNEL | GFP_NOWAIT : GFP_KERNEL;
 
-  if(atomic) {
+  if(atomic)
     spin_lock_irqsave(&elem->lock, flags);
-  } else {
+  else 
     spin_lock(&elem->lock);
-  }
+
   if(elem -> pfn == KVM_PFN_ERR_FAULT) {
     page = alloc_page(gfp);
-    BUG_ON(!page);
+    if(!page)
+      panic("Page cannot be allocated.");
     elem->pfn = page ? page_to_pfn(page) : KVM_PFN_ERR_FAULT;
   } else {
     page = pfn_to_page(elem->pfn);
   }
 
+  /* We have to manually increment refcount to perform the same semantics as GUP */
   get_page(page);
   pfn = elem->pfn;
 
@@ -2771,15 +2782,51 @@ kvm_pfn_t __gfn_to_kpfn_memslot(struct kvm_memory_slot *slot, gfn_t gfn,
     *writable = true;
 
   if(hva)
-    *hva = (hva_t) page_address(page);
+    *hva=(hva_t)page_address(page);
 
-  if(atomic) {
+  if(atomic)
     spin_unlock_irqrestore(&elem->lock, flags);
-  } else {
+  else 
     spin_unlock(&elem->lock);
-  }
+
+  pr_info("%s: gfn=0x%llx->pfn=0x%llx\n", __func__, gfn, pfn);
   return pfn;
 }
+
+int kvm_free_kpfn(const struct kvm_memory_slot *slot, gfn_t gfn, bool atomic, bool interruptible)
+{
+  struct kvm_kpfn_element *elem = &slot->arch.kpfn_elems[gfn-slot->base_gfn];
+  struct page *page;
+  unsigned long flags;
+  int ret = 0;
+
+  if(atomic)
+    spin_lock_irqsave(&elem->lock, flags);
+  else
+    spin_lock(&elem->lock);
+
+  if(elem -> pfn == KVM_PFN_ERR_FAULT) {
+    pr_warn("%s: unexpected gfn=0x%llx\n", __func__, gfn);
+    ret = -EINVAL;
+    goto out;
+  }
+
+  /* WARNING: This should decrement the count back to zero if correct */
+  /* It is subject to testing */
+  page = pfn_to_page(elem->pfn);
+  pr_info("%s: put_page for gfn=0x%llx, kpfn=0x%llx, refcount=%d\n", __func__, gfn, elem->pfn, page_ref_count(page));
+  put_page(pfn_to_page(elem->pfn));
+  elem->pfn = KVM_PFN_ERR_FAULT;
+
+out:
+  if(atomic) 
+    spin_unlock_irqrestore(&elem->lock, flags);
+  else
+    spin_unlock(&elem->lock);
+
+  return ret;
+}
+
 
 kvm_pfn_t __gfn_to_pfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn,
 			       bool atomic, bool interruptible, bool *async,
@@ -2795,6 +2842,9 @@ kvm_pfn_t __gfn_to_pfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn,
 			*writable = false;
 		return KVM_PFN_ERR_RO_FAULT;
 	}
+
+  if(kvm_kpfn_ready_memslot(slot, gfn)) 
+    return __gfn_to_kpfn_memslot(slot, gfn, atomic, interruptible, write_fault, writable, hva);
 
 	if (kvm_is_error_hva(addr)) {
 		if (writable)
@@ -3002,6 +3052,7 @@ void kvm_release_pfn_clean(kvm_pfn_t pfn)
 	if (!page)
 		return;
 
+  pr_info("%s: pfn=0x%llx, refcount=0x%d\n", __func__, pfn, page_ref_count(page));
 	kvm_release_page_clean(page);
 }
 EXPORT_SYMBOL_GPL(kvm_release_pfn_clean);

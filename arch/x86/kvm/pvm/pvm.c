@@ -1952,6 +1952,21 @@ static int handle_hc_event_window(struct kvm_vcpu *vcpu)
 	return 1;
 }
 
+extern void runpv_mark_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order);
+extern void runpv_free_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order);
+
+static int handle_hc_mark_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order)
+{
+  runpv_mark_kpfn(vcpu, gfn, order);
+  return 1;
+}
+
+static int handle_hc_free_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order)
+{
+  runpv_free_kpfn(vcpu, gfn, order);
+  return 1;
+}
+
 static int handle_hc_irq_halt(struct kvm_vcpu *vcpu)
 {
 	kvm_set_rflags(vcpu, kvm_get_rflags(vcpu) | X86_EFLAGS_IF);
@@ -2354,6 +2369,10 @@ static int handle_exit_syscall(struct kvm_vcpu *vcpu)
 		return handle_hc_set_page_offset_base(vcpu, a0);
   case PVM_HC_VIRTIO_NOTIFY:
     return handle_hc_virtio_kick(vcpu, a0, a1);
+  case PVM_HC_MARK_KPFN:
+    return handle_hc_mark_kpfn(vcpu, a0, a1);
+  case PVM_HC_FREE_KPFN:
+    return handle_hc_free_kpfn(vcpu, a0, a1);
 	default:
 		return handle_kvm_hypercall(vcpu);
 	}

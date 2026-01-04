@@ -63,13 +63,15 @@ static inline void runpv_mark_remap_pvcs_tls(struct task_struct *tsk) {
 
 #ifdef CONFIG_RUNPV_MEM_PARAVIRT
 void runpv_free_page_hook(struct page *page, unsigned int order);
-void runpv_alloc_page_hook(struct page *page, unsigned int order, gfp_t gfp_flags);
+void runpv_alloc_page_hook(struct page *page, unsigned int order);
 #else
-static inline void runpv_free_page_hook(struct page *page, unsigned int order) {
+static inline void runpv_free_page_hook(struct page *page, unsigned int order)
+{
 
 }
 
-static inline void runpv_alloc_page_hook(struct page *page, unsigned int order, gfp_t gfp_flags){
+static inline void runpv_alloc_page_hook(struct page *page, unsigned int order)
+{
 
 }
 #endif
