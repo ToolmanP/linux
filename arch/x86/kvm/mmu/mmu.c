@@ -998,7 +998,7 @@ static void pte_list_desc_remove_entry(struct kvm *kvm,
 	 */
 	if (!head_desc->more) {
 		rmap_head->val = 0;
-    rmap_head->type = RMAP_EMPTY;
+    rmap_head->type = rmap_head->type != RMAP_KERNEL ? RMAP_EMPTY : rmap_head -> type;
   }
 	else
 		rmap_head->val = (unsigned long)head_desc->more | 1;
@@ -1069,7 +1069,7 @@ static bool kvm_zap_all_rmap_sptes(struct kvm *kvm,
 out:
 	/* rmap_head is meaningless now, remember to reset it */
 	rmap_head->val = 0;
-  rmap_head->type = RMAP_EMPTY;
+  rmap_head->type = rmap_head->type != RMAP_KERNEL ? RMAP_EMPTY : rmap_head -> type;
 	return true;
 }
 
