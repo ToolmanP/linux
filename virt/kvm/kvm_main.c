@@ -3052,7 +3052,6 @@ void kvm_release_pfn_clean(kvm_pfn_t pfn)
 	if (!page)
 		return;
 
-  pr_info("%s: pfn=0x%llx, refcount=0x%d\n", __func__, pfn, page_ref_count(page));
 	kvm_release_page_clean(page);
 }
 EXPORT_SYMBOL_GPL(kvm_release_pfn_clean);

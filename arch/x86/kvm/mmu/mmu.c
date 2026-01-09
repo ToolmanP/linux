@@ -57,6 +57,12 @@
 
 #include "trace.h"
 
+#ifdef CONFIG_DEBUG_RUNPV_MMU
+#define runpv_debugln(fmt, ...) pr_info("%s(%d): "fmt"\n", __func__, __LINE__, __VA_ARGS__)
+#else
+#define runpv_debugln(fmt, ...)
+#endif
+
 extern bool itlb_multihit_kvm_mitigation;
 
 static bool nx_hugepage_mitigation_hard_disabled;
@@ -1106,7 +1112,7 @@ bool kvm_mark_kpfn_ready(const struct kvm_memory_slot *slot, gfn_t gfn, int leve
     idx = gfn_to_index(gfn, slot->base_gfn, i);
     rmap_head = &slot->arch.rmap[i - PG_LEVEL_4K][idx];
     if(rmap_head -> type == RMAP_USER) {
-      pr_info("%s: failed. gfn=0x%llx, type=%d, tl=%d, level=%d, idx=%ld\n", __func__, gfn, rmap_head->type, level, i, idx);
+      runpv_debugln("gfn=0x%llx,type=%d,target=%d,cur=%d,idx=%ld.\n", gfn, rmap_head->type, level, i, idx);
       return false;
     }
   }
@@ -1136,18 +1142,16 @@ bool kvm_kpfn_ready_memslot(const struct kvm_memory_slot *slot, gfn_t gfn)
     idx = gfn_to_index(gfn, slot->base_gfn, i);
     head = &slot->arch.rmap[i - PG_LEVEL_4K][idx];
     if (head -> type != RMAP_EMPTY) {
-
       if (target->type == RMAP_KERNEL)
-        pr_info("%s: gfn=0x%llx failed (level=%d type=%d)\n", __func__, gfn, i, target->type);
+        runpv_debugln("gfn=0x%llx failed.(level=%d type=%d)", gfn, i, target->type);
       return false;
     }
-
   }
 
   if (target->type != RMAP_KERNEL)
     return false;
 
-  pr_info("%s: gfn=0x%llx ok\n", __func__, gfn);
+  runpv_debugln("gfn=0x%llx ok.", gfn);
   return true;
 }
 
@@ -3354,7 +3358,6 @@ static int direct_map(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 	if (WARN_ON_ONCE(it.level != fault->goal_level))
 		return -EFAULT;
 
-  pr_info("%s: gfn=0x%lx\n", base_gfn);
 	ret = mmu_set_spte(vcpu, fault->slot, it.sptep, ACC_ALL,
 			   base_gfn, fault->pfn, fault);
 	if (ret == RET_PF_SPURIOUS)
@@ -7333,7 +7336,7 @@ void runpv_free_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order)
   // struct kvm_memory_slot *slot;
   // int i;
   // slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
-  pr_info("%s: kpfn_free gfn=0x%llx, order=%d\n", __func__, gfn, order);
+  runpv_debugln("kpfn_free gfn=0x%llx, order=%d\n", gfn, order);
   // kvm_zap_gfn_range(vcpu->kvm, gfn, gfn + (1 << order));
   // write_lock(&vcpu->kvm->mmu_lock);
   // for(i = 0; i < (1 << order); i++) 
