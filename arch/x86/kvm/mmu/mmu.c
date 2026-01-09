@@ -1117,30 +1117,37 @@ bool kvm_mark_kpfn_ready(const struct kvm_memory_slot *slot, gfn_t gfn, int leve
 }
 
 
-bool kvm_kpfn_ready_memslot(const struct kvm_memory_slot *slot, gfn_t gfn) {
+bool kvm_kpfn_ready_memslot(const struct kvm_memory_slot *slot, gfn_t gfn)
+{
+  struct kvm_rmap_head *head, *target;
   unsigned long idx;
+  int i;
 
-  if(!slot)
+  if (!slot)
     return false;
 
-  if(!(gfn & (PMD_MASK >> PAGE_SHIFT)))
+  if (!(gfn & (PMD_MASK >> PAGE_SHIFT)))
     return false;
-
-  for(int i = PG_LEVEL_2M; i <= KVM_MAX_HUGEPAGE_LEVEL; i++){
-    idx = gfn_to_index(gfn, slot->base_gfn, i);
-    if(slot->arch.rmap[i - PG_LEVEL_4K][idx].type != RMAP_EMPTY) {
-      int idx_2 = gfn_to_index(gfn, slot->base_gfn, PG_LEVEL_4K);
-      if(slot->arch.rmap[0][idx_2].type == RMAP_KERNEL){
-        pr_info("%s: gfn=0x%llx cannot use kpfn due to level=%d rmap type=%d\n", __func__, gfn, i, slot->arch.rmap[i - PG_LEVEL_4K][idx].type);
-      }
-      return false;
-    }
-  }
 
   idx = gfn_to_index(gfn, slot->base_gfn, PG_LEVEL_4K);
-  if(slot->arch.rmap[0][idx].type != RMAP_KERNEL)
+  target = &slot->arch.rmap[0][idx];
+
+  for (i = PG_LEVEL_2M; i <= KVM_MAX_HUGEPAGE_LEVEL; i++) {
+    idx = gfn_to_index(gfn, slot->base_gfn, i);
+    head = &slot->arch.rmap[i - PG_LEVEL_4K][idx];
+    if (head -> type != RMAP_EMPTY) {
+
+      if (target->type == RMAP_KERNEL)
+        pr_info("%s: gfn=0x%llx failed (level=%d type=%d)\n", __func__, gfn, i, target->type);
+      return false;
+    }
+
+  }
+
+  if (target->type != RMAP_KERNEL)
     return false;
-  pr_info("%s: gfn=0x%llx can use kpfn\n", __func__, gfn);
+
+  pr_info("%s: gfn=0x%llx ok\n", __func__, gfn);
   return true;
 }
 
