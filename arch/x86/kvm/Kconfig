@@ -133,6 +133,12 @@ config KVM_RUNPV
 	help
 			Provides RUNPV Hypervisor
 
+config DEBUG_RUNPV_MMU
+	bool "RunPV Hypervisor"
+	depends on KVM_RUNPV
+	help
+      Debug RUNPV MMU
+
 config KVM_SMM
 	bool "System Management Mode emulation"
 	default y

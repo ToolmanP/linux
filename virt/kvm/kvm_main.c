@@ -2806,7 +2806,7 @@ int kvm_free_kpfn(const struct kvm_memory_slot *slot, gfn_t gfn, bool atomic, bo
     spin_lock(&elem->lock);
 
   if(elem -> pfn == KVM_PFN_ERR_FAULT) {
-    pr_warn("%s: unexpected gfn=0x%llx\n", __func__, gfn);
+    panic("%s: unexpected gfn=0x%llx\n", __func__, gfn);
     ret = -EINVAL;
     goto out;
   }
@@ -2815,7 +2815,7 @@ int kvm_free_kpfn(const struct kvm_memory_slot *slot, gfn_t gfn, bool atomic, bo
   /* It is subject to testing */
   page = pfn_to_page(elem->pfn);
   pr_info("%s: put_page for gfn=0x%llx, kpfn=0x%llx, refcount=%d\n", __func__, gfn, elem->pfn, page_ref_count(page));
-  put_page(pfn_to_page(elem->pfn));
+  __free_page(page);
   elem->pfn = KVM_PFN_ERR_FAULT;
 
 out:

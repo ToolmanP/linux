@@ -407,6 +407,7 @@ enum kvm_rmap_type {
   RMAP_EMPTY = 0,
   RMAP_KERNEL,
   RMAP_USER,
+  RMAP_MIXED,
 };
 
 struct kvm_rmap_head {

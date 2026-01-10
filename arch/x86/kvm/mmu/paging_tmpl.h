@@ -564,6 +564,7 @@ FNAME(prefetch_gpte)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
 	if (is_error_pfn(pfn))
 		return false;
 
+  runpv_debugln("gfn=0x%llx->pfn=0x%llx", gfn, pfn);
 	mmu_set_spte(vcpu, slot, spte, pte_access, gfn, pfn, NULL);
 	kvm_release_pfn_clean(pfn);
 	return true;
@@ -759,6 +760,8 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 	if (WARN_ON_ONCE(it.level != fault->goal_level))
 		return -EFAULT;
 
+  runpv_debugln("gfn=0x%llx->base_gfn=0x%llx->pfn=0x%llx", fault->gfn, base_gfn, fault->pfn);
+
 	ret = mmu_set_spte(vcpu, fault->slot, it.sptep, gw->pte_access,
 			   base_gfn, fault->pfn, fault);
 	if (ret == RET_PF_SPURIOUS)
@@ -823,6 +826,7 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	if (r)
 		return r;
 
+  runpv_debugln("gfn=0x%llx", fault->gfn);
 	r = kvm_faultin_pfn(vcpu, fault, walker.pte_access);
 	if (r != RET_PF_CONTINUE)
 		return r;
@@ -855,6 +859,7 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	r = make_mmu_pages_available(vcpu);
 	if (r)
 		goto out_unlock;
+  runpv_debugln("gfn=0x%llx,pfn=0x%llx", fault->gfn, fault->pfn);
 	r = FNAME(fetch)(vcpu, fault, &walker);
 
 out_unlock:
