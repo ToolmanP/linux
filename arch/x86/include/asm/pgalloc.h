@@ -28,7 +28,9 @@ static inline void paravirt_release_pmd(unsigned long pfn) {}
 static inline void paravirt_release_pud(unsigned long pfn) {}
 static inline void paravirt_release_p4d(unsigned long pfn) {}
 #endif
-
+#ifdef CONFIG_RUNPV_GUEST
+#include <asm/runpv_para.h>
+#endif
 /*
  * Flags to use when allocating a user page table page.
  */

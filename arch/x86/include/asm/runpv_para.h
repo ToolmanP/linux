@@ -74,6 +74,10 @@ static inline void runpv_alloc_page_hook(struct page *page, unsigned int order)
 {
 
 }
+static inline void runpv_set_pte(unsigned long ptep, unsigned long pte, int level)
+{
+
+}
 #endif
 
 #endif

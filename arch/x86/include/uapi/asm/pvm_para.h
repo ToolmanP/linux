@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _UAPI_ASM_X86_PVM_PARA_H
 #define _UAPI_ASM_X86_PVM_PARA_H
-
 #include <linux/const.h>
 #include <asm/page_types.h>
 
@@ -63,6 +62,7 @@
 #define PVM_HC_VIRTIO_NOTIFY (PVM_HC_SPECIAL_BASE+13)
 #define PVM_HC_MARK_KPFN (PVM_HC_SPECIAL_BASE+14)
 #define PVM_HC_FREE_KPFN (PVM_HC_SPECIAL_BASE+15)
+#define PVM_HC_MMU_SET_PTE (PVM_HC_SPECIAL_BASE+16)
 
 #define RUNPV_HC_SPECIAL_MAX_NR		(256)
 #define RUNPV_HC_SPECIAL_BASE		PVM_HC_SPECIAL_MAX

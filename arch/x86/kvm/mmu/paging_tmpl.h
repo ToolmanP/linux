@@ -593,6 +593,17 @@ static bool FNAME(gpte_changed)(struct kvm_vcpu *vcpu,
 	return r || curr_pte != gw->ptes[level - 1];
 }
 
+#if PTTYPE == 64
+static bool FNAME(gpte_changed2)(struct kvm_vcpu *vcpu,
+    pt_element_t old_pte, gpa_t pte_gpa, pt_element_t *new_pte)
+{
+  int r;
+  r = kvm_vcpu_read_guest_atomic(vcpu, pte_gpa,
+        new_pte, sizeof(curr_pte));
+  return *new_pte != old_pte;
+}
+#endif
+
 static void FNAME(pte_prefetch)(struct kvm_vcpu *vcpu, struct guest_walker *gw,
 				u64 *sptep)
 {

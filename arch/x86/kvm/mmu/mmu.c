@@ -7421,3 +7421,87 @@ void runpv_free_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order)
 
 }
 EXPORT_SYMBOL_GPL(runpv_free_kpfn);
+
+static struct kvm_mmu_page *runpv_mmu_get_nonleaf_shadow_page(struct kvm_vcpu *vcpu, gfn_t pte, int level)
+{
+  union kvm_mmu_page_role role;
+  role = vcpu->arch.mmu->root_role;
+  role.level = level;
+  role.access = 7;
+  role.quadrant = 0;
+  return kvm_mmu_get_shadow_page(vcpu, pte >> PAGE_SHIFT, role);
+}
+
+/* Fast-path tried to set page table for non_leaf entry */
+static int runpv_mmu_set_nonleaf_pte(struct kvm_vcpu *vcpu, gfn_t ptep, gfn_t pte, int level)
+{
+  struct kvm *kvm;
+  struct kvm_mmu_page *parent_sp, *child_sp;
+  unsigned long new_pte;
+  hpa_t *sptep;
+
+  if (paging64_gpte_changed2(vcpu, pte, ptep, &new_pte))
+  {
+    runpv_debugln("gpte_changed: ptep=0x%lx old_pte=0x%lx new_pte=0x%lx", ptep, pte, new_pte);
+    return -EAGAIN;
+  }
+
+  kvm = vcpu->kvm;
+  parent_sp = runpv_mmu_get_nonleaf_shadow_page(vcpu, ptep, level);
+  child_sp = runpv_mmu_get_nonleaf_shadow_page(vcpu, pte, level - 1);
+
+  sptep = parent_sp->spt + SPTE_INDEX(ptep, level);
+
+  if(!is_shadow_present_pte(*sptep)) {
+    runpv_debugln("nonleaf_pte: ptep=0x%lx pte=0x%lx level=%d", ptep, pte, level);
+    link_shadow_page(vcpu, sptep, child_sp);
+  } else {
+    runpv_debugln("reject nonleaf_pte: ptep=0x%lx pte=0x%lx level=%d", ptep, pte, level);
+  }
+
+  return 0;
+}
+
+static int runpv_mmu_set_leaf_pte(struct kvm_vcpu *vcpu, gfn_t ptep, gfn_t pte)
+{
+  struct kvm_memory_slot *slot;
+  struct kvm_mmu_page *parent_sp;
+  struct kvm *kvm;
+
+  hpa_t *sptep;
+  gfn_t index, gfn;
+  kvm_pfn_t pfn;
+  unsigned int pte_access;
+
+  kvm = vcpu->kvm;
+  parent_sp = runpv_mmu_get_nonleaf_shadow_page(vcpu, ptep, 3);
+  slot = kvm_vcpu_gfn_to_memslot(vcpu, pte >> PAGE_SHIFT);
+
+	index = SPTE_INDEX(ptep, 3);
+  sptep = ((u64 *)__va(parent_sp->spt)) + index;
+  gfn = pte >> PAGE_SHIFT;
+
+  // pfn = __gfn_to_pfn_memslot(slot, gfn, true, false, NULL, true, NULL, NULL);
+  //
+  // pte_access = paging64_gpte_access(pte ^ shadow_nx_mask) & parent_sp->role.access;
+  //
+  // mmu_set_spte(vcpu, slot, sptep, pte_access, gfn, pfn, NULL);
+  // return 0;
+  panic("Unimplemented runpv_mmu_set_leaf_pte");
+}
+
+int runpv_mmu_set_pte(struct kvm_vcpu *vcpu, gfn_t ptep, gfn_t pte, int level)
+{
+  struct kvm *kvm;
+  int ret;
+  kvm = vcpu->kvm;
+  BUG_ON(level < 1 || level > 4);
+  write_lock(&kvm->mmu_lock);
+  if(level == 1)
+    ret = runpv_mmu_set_leaf_pte(vcpu, ptep, pte);
+  else
+    ret = runpv_mmu_set_nonleaf_pte(vcpu, ptep, pte, level);
+  write_unlock(&kvm->mmu_lock);
+  return ret;
+}
+EXPORT_SYMBOL_GPL(runpv_mmu_set_pte);

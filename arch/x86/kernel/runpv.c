@@ -1,3 +1,4 @@
+#include "asm/pvm_para.h"
 #define pr_fmt(fmt) "runpv-guest: " fmt
 
 #include <linux/mm.h>
@@ -105,41 +106,34 @@ __visible noinstr bool do_syscall_64_runpv(struct pt_regs *regs, int nr)
 
 #ifdef CONFIG_RUNPV_MEM_PARAVIRT
 
+static int runpv_set_pte(void *ptep, phys_addr_t pte, int level)
+{
+  return pvm_hypercall3(PVM_HC_MMU_SET_PTE, __pa((unsigned long)ptep), (unsigned long)pte, (unsigned long) level);
+}
+
 void runpv_alloc_page_hook(struct page *page, unsigned int order)
 {
   SetPageRunpv(page);
-  pr_info("Allocated virt page: 0x%lx\n", page_to_virt(page));
   pvm_hypercall2(PVM_HC_MARK_KPFN, (unsigned long)page_to_pfn(page), (unsigned long)order);
 }
-
 EXPORT_SYMBOL(runpv_alloc_page_hook);
 
 void runpv_free_page_hook(struct page *page, unsigned int order)
 {
   pvm_hypercall2(PVM_HC_FREE_KPFN, (unsigned long)page_to_pfn(page), (unsigned long)order);
 }
-
 EXPORT_SYMBOL(runpv_free_page_hook);
-
-
-static void runpv_set_pte(pte_t *ptep, pte_t pteval)
-{
-	native_set_pte(ptep, pteval);
-}
 
 static void runpv_set_pmd(pmd_t *pmdp, pmd_t pmdval)
 {
-	native_set_pmd(pmdp, pmdval);
+  if(runpv_set_pte(pmdp, pmdval.pmd, 3))
+    native_set_pmd(pmdp, pmdval);
 }
 
 static void runpv_set_pud(pud_t *pudp, pud_t pudval)
 {
-	native_set_pud(pudp, pudval);
-}
-
-static void runpv_set_p4d(p4d_t *p4dp, p4d_t p4dval)
-{
-	native_set_p4d(p4dp, p4dval);
+  if(runpv_set_pte(pudp, pudval.pud, 4))
+    native_set_pud(pudp, pudval);
 }
 
 #endif
@@ -161,10 +155,8 @@ static void runpv_flush_tlb_one_user(unsigned long addr)
 
 void __init runpv_early_setup(void){
 #ifdef CONFIG_RUNPV_MEM_PARAVIRT
-	pv_ops.mmu.set_pte = runpv_set_pte;
 	pv_ops.mmu.set_pmd = runpv_set_pmd;
 	pv_ops.mmu.set_pud = runpv_set_pud;
-	pv_ops.mmu.set_p4d = runpv_set_p4d;
 #endif
 	pv_ops.mmu.flush_tlb_user = runpv_flush_tlb_user;
 	pv_ops.mmu.flush_tlb_kernel = runpv_flush_tlb_kernel;

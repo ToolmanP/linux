@@ -261,6 +261,11 @@ static inline bool is_shadow_present_pte(u64 pte)
 	return !!(pte & SPTE_MMU_PRESENT_MASK);
 }
 
+static inline bool is_shadow_page_size_pte(u64 pte)
+{
+  return !!(pte & PT_PAGE_SIZE_MASK);
+}
+
 /*
  * Returns true if A/D bits are supported in hardware and are enabled by KVM.
  * When enabled, KVM uses A/D bits for all non-nested MMUs.  Because L1 can

@@ -2342,4 +2342,5 @@ static inline void kvm_account_pgtable_pages(void *virt, int nr)
 extern bool kvm_kpfn_ready_memslot(const struct kvm_memory_slot *slot, gfn_t gfn);
 extern bool kvm_vcpu_kpfn_ready(struct kvm_vcpu *vcpu, gfn_t gfn);
 extern void runpv_mark_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order);
+int runpv_mmu_set_pte(struct kvm_vcpu *vcpu, gfn_t ptep, gfn_t pte, int level);
 #endif

@@ -1954,6 +1954,7 @@ static int handle_hc_event_window(struct kvm_vcpu *vcpu)
 
 extern void runpv_mark_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order);
 extern void runpv_free_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order);
+extern int runpv_mmu_set_pte(struct kvm_vcpu *vcpu, gfn_t ptep, gfn_t pte, int level);
 
 static int handle_hc_mark_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order)
 {
@@ -1964,6 +1965,13 @@ static int handle_hc_mark_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order)
 static int handle_hc_free_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order)
 {
   runpv_free_kpfn(vcpu, gfn, order);
+  return 1;
+}
+
+static int handle_hc_set_pte(struct kvm_vcpu *vcpu, gfn_t ptep, gfn_t pte, int level)
+{
+  int ret = runpv_mmu_set_pte(vcpu, ptep, pte, level);
+  kvm_rax_write(vcpu, ret);
   return 1;
 }
 
@@ -2373,6 +2381,8 @@ static int handle_exit_syscall(struct kvm_vcpu *vcpu)
     return handle_hc_mark_kpfn(vcpu, a0, a1);
   case PVM_HC_FREE_KPFN:
     return handle_hc_free_kpfn(vcpu, a0, a1);
+  case PVM_HC_MMU_SET_PTE:
+    return handle_hc_set_pte(vcpu, a0, a1, a2);
 	default:
 		return handle_kvm_hypercall(vcpu);
 	}
