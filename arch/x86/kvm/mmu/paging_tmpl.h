@@ -595,11 +595,11 @@ static bool FNAME(gpte_changed)(struct kvm_vcpu *vcpu,
 
 #if PTTYPE == 64
 static bool FNAME(gpte_changed2)(struct kvm_vcpu *vcpu,
-    pt_element_t old_pte, gpa_t pte_gpa, pt_element_t *new_pte)
+    gpa_t old_pte, gpa_t pte_gpa, gpa_t *new_pte)
 {
   int r;
   r = kvm_vcpu_read_guest_atomic(vcpu, pte_gpa,
-        new_pte, sizeof(curr_pte));
+        new_pte, sizeof(old_pte));
   return *new_pte != old_pte;
 }
 #endif
