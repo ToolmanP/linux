@@ -1,4 +1,3 @@
-#include "asm/pvm_para.h"
 #define pr_fmt(fmt) "runpv-guest: " fmt
 
 #include <linux/mm.h>
@@ -126,13 +125,11 @@ EXPORT_SYMBOL(runpv_free_page_hook);
 
 static void runpv_set_pmd(pmd_t *pmdp, pmd_t pmdval)
 {
-  if(runpv_set_pte(pmdp, pmdval.pmd, 3))
     native_set_pmd(pmdp, pmdval);
 }
 
 static void runpv_set_pud(pud_t *pudp, pud_t pudval)
 {
-  if(runpv_set_pte(pudp, pudval.pud, 4))
     native_set_pud(pudp, pudval);
 }
 

@@ -2747,6 +2747,12 @@ exit:
 }
 
 
+#ifdef CONFIG_DEBUG_RUNPV_MMU
+#define runpv_debugln(fmt, ...) pr_info("%s(%d): "fmt"\n", __func__, __LINE__, __VA_ARGS__)
+#else
+#define runpv_debugln(fmt, ...)
+#endif
+
 /* MUST HOLD THE MMU LOCK TO INVOKE THIS*/
 kvm_pfn_t __gfn_to_kpfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn,
     bool atomic, bool interruptible, bool write_fault,
@@ -2782,14 +2788,14 @@ kvm_pfn_t __gfn_to_kpfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn,
     *writable = true;
 
   if(hva)
-    *hva=(hva_t)page_address(page);
+    *hva = (hva_t)page_address(page);
 
   if(atomic)
     spin_unlock_irqrestore(&elem->lock, flags);
   else 
     spin_unlock(&elem->lock);
 
-  pr_info("%s: gfn=0x%llx->pfn=0x%llx\n", __func__, gfn, pfn);
+  runpv_debugln("gfn=0x%llx->pfn=0x%llx", gfn, pfn);
   return pfn;
 }
 
@@ -2814,7 +2820,7 @@ int kvm_free_kpfn(const struct kvm_memory_slot *slot, gfn_t gfn, bool atomic, bo
   /* WARNING: This should decrement the count back to zero if correct */
   /* It is subject to testing */
   page = pfn_to_page(elem->pfn);
-  pr_info("%s: put_page for gfn=0x%llx, kpfn=0x%llx, refcount=%d\n", __func__, gfn, elem->pfn, page_ref_count(page));
+  runpv_debugln("gfn=0x%llx kpfn=0x%llx refcount=%d", gfn, elem->pfn, page_ref_count(page));
   __free_page(page);
   elem->pfn = KVM_PFN_ERR_FAULT;
 
