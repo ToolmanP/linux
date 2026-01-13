@@ -936,6 +936,13 @@ static struct kvm_memory_slot *gfn_to_memslot_dirty_bitmap(struct kvm_vcpu *vcpu
 /*
  * Returns the number of pointers in the rmap chain, not counting the new one.
  */
+
+static inline void pte_list_reset(struct kvm_rmap_head *rmap_head)
+{
+  rmap_head->val = 0;
+  rmap_head->type = rmap_head->type == RMAP_EMPTY ? RMAP_USER : rmap_head -> type;
+}
+
 static int pte_list_add(struct kvm_mmu_memory_cache *cache, u64 *spte,
 			struct kvm_rmap_head *rmap_head)
 {
@@ -1002,10 +1009,8 @@ static void pte_list_desc_remove_entry(struct kvm *kvm,
 	 * nullify the rmap head to mark the list as emtpy, else point the rmap
 	 * head at the next descriptor, i.e. the new head.
 	 */
-	if (!head_desc->more) {
-		rmap_head->val = 0;
-    rmap_head->type = rmap_head->type == RMAP_USER ? RMAP_EMPTY : rmap_head -> type;
-  }
+	if (!head_desc->more)
+    pte_list_reset(rmap_head);
 	else
 		rmap_head->val = (unsigned long)head_desc->more | 1;
 	mmu_free_pte_list_desc(head_desc);
@@ -1023,8 +1028,7 @@ static void pte_list_remove(struct kvm *kvm, u64 *spte,
 	if (!(rmap_head->val & 1)) {
 		if (KVM_BUG_ON_DATA_CORRUPTION((u64 *)rmap_head->val != spte, kvm))
 			return;
-
-		rmap_head->val = 0;
+    pte_list_reset(rmap_head);
 	} else {
 		desc = (struct pte_list_desc *)(rmap_head->val & ~1ul);
 		while (desc) {
@@ -1074,8 +1078,7 @@ static bool kvm_zap_all_rmap_sptes(struct kvm *kvm,
 	}
 out:
 	/* rmap_head is meaningless now, remember to reset it */
-	rmap_head->val = 0;
-  rmap_head->type = rmap_head->type == RMAP_USER ? RMAP_EMPTY : rmap_head -> type;
+  pte_list_reset(rmap_head);
 	return true;
 }
 
@@ -1134,11 +1137,23 @@ static enum kvm_rmap_type kvm_rmap_type_combine(enum kvm_rmap_type parent, enum 
   }
 }
 
-bool kvm_mark_kpfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn, int level, enum kvm_rmap_type type)
+static bool kvm_rmap_marked_kpfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn, int level)
+{
+  struct kvm_rmap_head *rmap_head;
+  unsigned long idx;
+
+  idx = gfn_to_index(gfn, slot->base_gfn, level);
+  rmap_head = &slot->arch.rmap[level - PG_LEVEL_4K][idx];
+
+  return rmap_head->type == RMAP_KERNEL || rmap_head->type == RMAP_MIXED;
+}
+
+static bool kvm_mark_rmap_memslot(const struct kvm_memory_slot *slot, gfn_t gfn, int level, enum kvm_rmap_type type)
 {
   struct kvm_rmap_head *rmap_head;
   unsigned long idx;
   int i;
+
 
   idx = gfn_to_index(gfn, slot->base_gfn, level);
   rmap_head = &slot->arch.rmap[level - PG_LEVEL_4K][idx];
@@ -1198,7 +1213,7 @@ bool kvm_kpfn_ready_memslot(const struct kvm_memory_slot *slot, gfn_t gfn)
   }
 
   if (target->type != RMAP_KERNEL) {
-    runpv_debugln("gfn=0x%llx, failed.", gfn);
+    runpv_debugln("gfn=0x%llx, failed. type=0x%d", gfn, target->type);
     return false;
   } else {
     runpv_debugln("gfn=0x%llx ok.", gfn);
@@ -1781,7 +1796,9 @@ static void __rmap_add(struct kvm *kvm,
 
 	rmap_head = gfn_to_rmap(gfn, sp->role.level, slot);
 	rmap_count = pte_list_add(cache, spte, rmap_head);
-  kvm_mark_kpfn_memslot(slot, gfn, sp->role.level, RMAP_USER);
+
+  if(!kvm_rmap_marked_kpfn_memslot(slot, gfn, sp->role.level))
+    kvm_mark_rmap_memslot(slot, gfn, sp->role.level, RMAP_USER);
 
 	if (rmap_count > kvm->stat.max_mmu_rmap_size)
 		kvm->stat.max_mmu_rmap_size = rmap_count;
@@ -7394,7 +7411,7 @@ void runpv_mark_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order)
   __kvm_vcpu_zap_gfn_range(vcpu, gfn_start, gfn_end);
 
   for(i = 0 ; i < npages; i++)
-    kvm_mark_kpfn_memslot(slot, gfn + i, PG_LEVEL_4K, RMAP_KERNEL);
+    kvm_mark_rmap_memslot(slot, gfn + i, PG_LEVEL_4K, RMAP_KERNEL);
 
   write_unlock(&kvm->mmu_lock);
 }
