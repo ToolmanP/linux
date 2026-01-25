@@ -68,12 +68,17 @@ static inline long runpv_hypercall3_retry(long nr, long a0, long a1, long a2)
 }
 
 void __init runpv_early_setup(unsigned long pgd);
+void __init runpv_init_direct_mapping_shadow(unsigned long start_pfn, unsigned long end_pfn);
 
 #else
 
 static inline void runpv_setup_pvcs(int cpu) { }
 
 static inline void runpv_early_setup(unsigned long pgd) {
+
+}
+
+static inline void runpv_init_direct_mapping_shadow(unsigned long start_pfn, unsigned long end_pfn) {
 
 }
 

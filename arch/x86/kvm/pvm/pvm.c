@@ -23,6 +23,7 @@
 #include <asm/pgtable_types.h>
 #include <asm/page.h>
 
+#include "mmu/mmu_internal.h"
 #include "cpuid.h"
 #include "lapic.h"
 #include "mmu.h"
@@ -2364,34 +2365,35 @@ static int handle_hc_virtio_kick(struct kvm_vcpu *vcpu, unsigned long addr, unsi
   return 1;
 }
 
-extern int runpv_faultin_direct_mapping(
+extern int runpv_init_direct_mapping_shadow(
 	struct kvm_vcpu *vcpu,
-	unsigned long gfn,
-	unsigned long pfn
+	unsigned long start_gfn,
+	unsigned long end_gfn
+);
+
+extern int runpv_faultin_direct_mapping_fast(
+	struct kvm_vcpu *vcpu,
+	gfn_t gfn
 );
 
 #define RUNPV_BATCHED_PAGES_MAX_NR 128
 
 static inline unsigned int __alloc_from_buddy(struct kvm_vcpu *vcpu, unsigned long *gfns, unsigned int *orders, unsigned long nr_pages)
 {
-	unsigned long i, j;
-	int r;
+	int i, j;
 	unsigned int page_count = 0;
+  gfn_t gfn;
+  kvm_pfn_t pfn;
 
 	for (i = 0; i < nr_pages; i++) {
-
 		page_count += (1 << orders[i]);
 		runpv_mark_kpfn(vcpu, gfns[i], orders[i]);
-
 		for (j = 0; j < (1 << orders[i]); j++) {
-
-			unsigned long gfn = gfns[i] + j;
-			kvm_pfn_t pfn = gfn_to_pfn(vcpu->kvm, gfn);
-			BUG_ON(is_error_noslot_pfn(pfn));
-			kvm_release_pfn_clean(pfn);
-			r = runpv_faultin_direct_mapping(vcpu, gfn, pfn);
+			gfn = gfns[i] + j;
+      pfn = gfn_to_pfn(vcpu->kvm, gfn);
 		}
 	}
+
 	return page_count;
 }
 
@@ -2453,6 +2455,16 @@ static int handle_hc_alloc_pte(struct kvm_vcpu *vcpu, unsigned long gfn, unsigne
 
 static int handle_hc_release_pte(struct kvm_vcpu *vcpu, unsigned long gfn, unsigned long level) {
 	int ret = runpv_mmu_release_pte(vcpu, gfn, level);
+	kvm_rax_write(vcpu, ret);
+	return 1;
+}
+
+static int handle_hc_init_direct_mapping_shadow(struct kvm_vcpu *vcpu,
+						unsigned long start_gfn,
+						unsigned long end_gfn)
+{
+	int ret;
+	ret = runpv_init_direct_mapping_shadow(vcpu, start_gfn, end_gfn);
 	kvm_rax_write(vcpu, ret);
 	return 1;
 }
@@ -2531,6 +2543,8 @@ static int handle_exit_syscall(struct kvm_vcpu *vcpu)
 		return handle_hc_alloc_pte(vcpu, a0, a1);
 	case PVM_HC_RELEASE_PTE:
 		return handle_hc_release_pte(vcpu, a0, a1);
+	case PVM_HC_INIT_DIRECT_MAPPING_SHADOW:
+		return handle_hc_init_direct_mapping_shadow(vcpu, a0, a1);
 	default:
 		return handle_kvm_hypercall(vcpu);
 	}

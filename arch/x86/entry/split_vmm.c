@@ -88,19 +88,23 @@ long runpv_hc_handle_set_pte(
 }
 
 __visible noinstr long do_fast_hypercall(long nr, long a0, long a1, long a2) {
+  long ret = 0;
 	switch (nr) {
 	case RUNPV_HC_SET_PTE:
-		return runpv_hc_handle_set_pte(a0, a1, a2);
+		ret = runpv_hc_handle_set_pte(a0, a1, a2);
+    break;
 	case RUNPV_HC_TLB_FLUSH:
-		return runpv_hc_handle_tlb_flush();
+		ret = runpv_hc_handle_tlb_flush();
+    break;
 	case RUNPV_HC_TLB_FLUSH_CURRENT:
-		return runpv_hc_handle_tlb_flush_current();
+		ret = runpv_hc_handle_tlb_flush_current();
+    break;
 	case RUNPV_HC_TLB_INVLPG:
-		return runpv_hc_handle_tlb_invlpg(a0);
+		ret = runpv_hc_handle_tlb_invlpg(a0);
+    break;
 	default:
 		pr_err("PVM: unknown fast hypercall: %#lx\n", nr);
 		return -ENOSYS;
 	}
-
-	return 0;
+	return ret;
 }

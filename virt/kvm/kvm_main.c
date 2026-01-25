@@ -2785,26 +2785,32 @@ kvm_pfn_t __gfn_to_kpfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn,
     bool *writable, hva_t *hva)
 {
   struct kvm_kpfn_element *elem = &slot->arch.kpfn_elems[gfn-slot->base_gfn];
-  unsigned long flags, gfp;
+  unsigned long gfp;
   struct page *page;
   kvm_pfn_t pfn;
   BUG_ON(atomic && interruptible);
 
-  gfp = atomic ? GFP_KERNEL | GFP_NOWAIT : GFP_KERNEL;
+  gfp = atomic ? GFP_ATOMIC : GFP_KERNEL;
 
-  if(atomic)
-    spin_lock_irqsave(&elem->lock, flags);
-  else 
-    spin_lock(&elem->lock);
+  spin_lock(&elem->lock);
 
   if(elem -> pfn == KVM_PFN_ERR_FAULT) {
+    spin_unlock(&elem->lock);
     page = alloc_page(gfp);
+
     if(!page)
       panic("Page cannot be allocated.");
-    elem->pfn = page ? page_to_pfn(page) : KVM_PFN_ERR_FAULT;
-  } else {
+
+    spin_lock(&elem->lock);
+    if(elem -> pfn == KVM_PFN_ERR_FAULT)
+      elem->pfn = page_to_pfn(page);
+    else {
+      put_page(page);
+      page = pfn_to_page(elem->pfn);
+    }
+
+  } else 
     page = pfn_to_page(elem->pfn);
-  }
 
   /* We have to manually increment refcount to perform the same semantics as GUP */
   get_page(page);
@@ -2816,10 +2822,7 @@ kvm_pfn_t __gfn_to_kpfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn,
   if(hva)
     *hva = (hva_t)page_address(page);
 
-  if(atomic)
-    spin_unlock_irqrestore(&elem->lock, flags);
-  else 
-    spin_unlock(&elem->lock);
+  spin_unlock(&elem->lock);
 
   runpv_debugln("gfn=0x%llx->pfn=0x%llx", gfn, pfn);
   return pfn;
@@ -2838,7 +2841,6 @@ int kvm_free_kpfn(const struct kvm_memory_slot *slot, gfn_t gfn, bool atomic, bo
     spin_lock(&elem->lock);
 
   if(elem -> pfn == KVM_PFN_ERR_FAULT) {
-    panic("%s: unexpected gfn=0x%llx\n", __func__, gfn);
     ret = -EINVAL;
     goto out;
   }

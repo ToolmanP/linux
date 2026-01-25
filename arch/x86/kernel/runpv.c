@@ -110,7 +110,6 @@ __visible noinstr bool do_syscall_64_runpv(struct pt_regs *regs, int nr)
 void runpv_alloc_page_hook(struct page *page, unsigned int order, gfp_t gfp_flags)
 {
   SetPageRunpv(page);
-//   pvm_hypercall2(PVM_HC_MARK_KPFN, (unsigned long)page_to_pfn(page), (unsigned long)order);
 	if (gfp_flags & __GFP_PT) {
 		page->host_page = 0xdead;
 	}
@@ -120,7 +119,6 @@ EXPORT_SYMBOL(runpv_alloc_page_hook);
 
 void runpv_free_page_hook(struct page *page, unsigned int order)
 {
-//   pvm_hypercall2(PVM_HC_FREE_KPFN, (unsigned long)page_to_pfn(page), (unsigned long)order);
 	BUG_ON(page->host_page == 0xdead);
 	return;
 }
@@ -176,12 +174,10 @@ void runpv_pfn_event_exit(int event)
 	if (batched_pages->nr_pages > 0) {
 		switch (event) {
 		case RUNPV_PFN_EVENT_ALLOC:
-			// pr_info("%s: alloc %u pages from buddy\n", __func__, batched_pages->nr_pages);
-			pvm_hypercall3(PVM_HC_ALLOC_FROM_BUDDY, batched_pages->gfns, batched_pages->orders, batched_pages->nr_pages);
+			pvm_hypercall3(PVM_HC_ALLOC_FROM_BUDDY, (long)batched_pages->gfns, (long)batched_pages->orders, batched_pages->nr_pages);
 			break;
 		case RUNPV_PFN_EVENT_FREE:
-			// pr_info("%s: free %u pages to buddy\n", __func__, batched_pages->nr_pages);
-			pvm_hypercall3(PVM_HC_FREE_TO_BUDDY, batched_pages->gfns, batched_pages->orders, batched_pages->nr_pages);
+			pvm_hypercall3(PVM_HC_FREE_TO_BUDDY, (long)batched_pages->gfns, (long)batched_pages->orders, batched_pages->nr_pages);
 			break;
 		default:
 			BUG();
@@ -194,55 +190,40 @@ EXPORT_SYMBOL_GPL(runpv_pfn_event_exit);
 
 static void runpv_set_pte(pte_t *ptep, pte_t pteval)
 {
-	// pr_info("%s parent %#lx pfn %#lx\n", __func__, __pa(ptep), (native_pte_val(pteval) & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT);
-	if (runpv_hypercall3_retry(RUNPV_HC_SET_PTE, (long)__pa(ptep), (long)native_pte_val(pteval), PVM_SET_PTE_PTE)) {
-		// pr_info("set pte %#lx to ptep %#lx failed\n", native_pte_val(pteval), ptep);
+	if (runpv_hypercall3_retry(RUNPV_HC_SET_PTE, (long)__pa(ptep), (long)native_pte_val(pteval), PVM_SET_PTE_PTE)) 
 		native_set_pte(ptep, pteval);
-	}
 }
 
 static void runpv_set_pmd(pmd_t *pmdp, pmd_t pmdval)
 {
-	// pr_info("%s parent %#lx pfn %#lx\n", __func__, __pa(pmdp), (native_pmd_val(pmdval) & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT);
-	if (runpv_hypercall3_retry(RUNPV_HC_SET_PTE, (long)__pa(pmdp), (long)native_pmd_val(pmdval), PVM_SET_PTE_PMD)) {
-		// pr_info("set pmd %#lx to pmdp %#lx failed\n", native_pmd_val(pmdval), pmdp);
+	if (runpv_hypercall3_retry(RUNPV_HC_SET_PTE, (long)__pa(pmdp), (long)native_pmd_val(pmdval), PVM_SET_PTE_PMD)) 
 		native_set_pmd(pmdp, pmdval);
-	}
 }
 
 static void runpv_set_pud(pud_t *pudp, pud_t pudval)
 {
-	// pr_info("%s parent %#lx pfn %#lx\n", __func__, __pa(pudp), (native_pud_val(pudval) & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT);
-	if (runpv_hypercall3_retry(RUNPV_HC_SET_PTE, (long)__pa(pudp), (long)native_pud_val(pudval), PVM_SET_PTE_PUD)) {
-		// pr_info("set pud %#lx to pudp %#lx failed\n", native_pud_val(pudval), pudp);
+	if (runpv_hypercall3_retry(RUNPV_HC_SET_PTE, (long)__pa(pudp), (long)native_pud_val(pudval), PVM_SET_PTE_PUD)) 
 		native_set_pud(pudp, pudval);
-	}
 }
 
 static void runpv_set_p4d(p4d_t *p4dp, p4d_t p4dval)
 {
-	// pr_info("%s parent %#lx pfn %#lx\n", __func__, __pa(p4dp), (native_p4d_val(p4dval) & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT);
-	if (runpv_hypercall3_retry(RUNPV_HC_SET_PTE, (long)__pa(p4dp), (long)native_p4d_val(p4dval), PVM_SET_PTE_P4D)) {
-		// pr_info("set p4d %#lx to p4dp %#lx failed\n", native_p4d_val(p4dval), p4dp);
+	if (runpv_hypercall3_retry(RUNPV_HC_SET_PTE, (long)__pa(p4dp), (long)native_p4d_val(p4dval), PVM_SET_PTE_P4D)) 
 		native_set_p4d(p4dp, p4dval);
-	}
 }
 
 static void runpv_alloc_pte(struct mm_struct *mm, unsigned long pfn)
 {
-	// pr_info("%s pfn %#lx\n", __func__, pfn);
 	pvm_hypercall2(PVM_HC_ALLOC_PTE, pfn, PVM_SET_PTE_PTE);
 }
 
 static void runpv_alloc_pmd(struct mm_struct *mm, unsigned long pfn)
 {
-	// pr_info("%s pfn %#lx\n", __func__, pfn);
 	pvm_hypercall2(PVM_HC_ALLOC_PTE, pfn, PVM_SET_PTE_PMD);
 }
 
 static void runpv_alloc_pud(struct mm_struct *mm, unsigned long pfn)
 {
-	// pr_info("%s pfn %#lx\n", __func__, pfn);
 	pvm_hypercall2(PVM_HC_ALLOC_PTE, pfn, PVM_SET_PTE_PUD);
 }
 
@@ -287,6 +268,13 @@ static void runpv_pgd_free(struct mm_struct *mm, pgd_t *pgd)
 static void runpv_flush_tlb_user(void)
 {
 	pvm_hypercall0(PVM_HC_TLB_FLUSH_CURRENT);
+}
+
+void __init runpv_init_direct_mapping_shadow(unsigned long start_pfn, unsigned long end_pfn)
+{
+	int ret;
+	ret = pvm_hypercall2(PVM_HC_INIT_DIRECT_MAPPING_SHADOW, start_pfn, end_pfn);
+	BUG_ON(ret < 0);
 }
 
 static void runpv_flush_tlb_kernel(void)

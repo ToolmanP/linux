@@ -1051,6 +1051,7 @@ struct kvm_mmu_invalid_list {
 
 struct kvm_kpfn_element {
   kvm_pfn_t pfn;
+  u64 *direct_map_sptep;  /* SPTE pointer for direct mapping region */
   spinlock_t lock;
 };
 

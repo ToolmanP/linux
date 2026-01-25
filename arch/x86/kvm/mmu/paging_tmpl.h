@@ -911,6 +911,135 @@ out_unlock:
 	return r;
 }
 
+static int FNAME(init_direct_mapping_shadow)(
+	struct kvm_vcpu *vcpu,
+	gva_t addr,
+	u64 **out_sptep
+)
+{
+	struct guest_walker walker;
+	struct kvm_shadow_walk_iterator it;
+	struct kvm_mmu_page *sp, *parent;
+	int access, direct_access;
+  int rcu_idx;
+	gfn_t table_gfn, base_gfn;
+	int r;
+
+	*out_sptep = NULL;
+
+	r = FNAME(walk_addr)(&walker, vcpu, addr, PFERR_WRITE_MASK);
+
+	if (!r) 
+		return 0;
+
+
+	/*
+	 * Walk the shadow page table and create indirect shadow pages
+	 * that mirror the guest page table structure, just like fetch() does.
+	 */
+
+  read_lock(&vcpu->kvm->mmu_invalidate_seq_lock);
+	r = make_mmu_pages_available(vcpu);
+  BUG_ON(r);
+
+  rcu_idx = srcu_read_lock(&vcpu->kvm->arch.mmu_srcu);
+  r = RET_PF_RETRY;
+	for_each_shadow_entry_locked(vcpu, addr, it) {
+
+    if(it.obsolete)
+      goto out_sp_obsolete;
+
+		if (it.level == walker.level)
+			break;
+
+		if (it.level <= PG_LEVEL_4K)
+			break;
+
+		table_gfn = walker.table_gfn[it.level - 2];
+		access = walker.pt_access[it.level - 2];
+
+    parent = sptep_to_sp(it.sptep);
+
+retry_indirect:
+		sp = kvm_mmu_get_child_sp(vcpu, it.sptep, table_gfn,
+					  false, access, &rcu_idx);
+
+		if (sp == ERR_PTR(-EEXIST))
+			continue;
+
+    if(sp_upgrade_lock(vcpu->kvm, parent)) {
+      sp_downgrade_lock(vcpu->kvm, parent);
+      goto out_sp_obsolete;
+    }
+
+    if(sp_write_lock(vcpu->kvm, sp)) {
+      sp_write_unlock(vcpu->kvm, sp);
+      sp_downgrade_lock(vcpu->kvm, parent);
+      goto retry_indirect;
+    }
+
+    link_shadow_page(vcpu, it.sptep, sp);
+    sp_write_unlock(vcpu->kvm, sp);
+
+    if(sp_downgrade_lock(vcpu->kvm, parent))
+      goto out_sp_obsolete;
+	}
+
+	/*
+	 * Continue walking to create shadow pages down to the final PTE level.
+	 * If the guest uses huge pages (walker.level > 1), we create direct
+	 * shadow pages for levels below the guest's mapping level.
+	 */
+
+	direct_access = walker.pte_access;
+
+  for (; shadow_walk_okay_locked(&it); shadow_walk_next(&it)) {
+    
+    if(it.obsolete)
+      goto out_sp_obsolete;
+
+    base_gfn = gfn_round_for_level(walker.gfn, it.level);
+
+    if (it.level == PG_LEVEL_4K) {
+      *out_sptep = it.sptep;
+      break;
+    }
+
+    validate_direct_spte(vcpu, it.sptep, direct_access);
+    parent = sptep_to_sp(it.sptep);
+retry_direct:
+    sp = kvm_mmu_get_child_sp(vcpu, it.sptep, base_gfn,
+            true, direct_access, &rcu_idx);
+
+    if (sp == ERR_PTR(-EEXIST))
+      continue;
+
+    if(sp_upgrade_lock(vcpu->kvm, parent)) {
+      sp_downgrade_lock(vcpu->kvm, parent);
+      goto out_sp_obsolete;
+    }
+
+    if(sp_write_lock(vcpu->kvm, sp)) {
+      sp_write_unlock(vcpu->kvm, sp);
+      sp_downgrade_lock(vcpu->kvm, parent);
+      goto retry_direct;
+    }
+
+    link_shadow_page(vcpu, it.sptep, sp);
+    sp_write_unlock(vcpu->kvm, sp);
+
+    if(sp_downgrade_lock(vcpu->kvm, parent))
+      goto out_sp_obsolete;
+    }
+
+  r = 0;
+out_sp_obsolete:
+  shadow_walk_end(&it);
+  srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
+  read_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
+	return r;
+}
+
 static gpa_t FNAME(get_level1_sp_gpa)(struct kvm_mmu_page *sp)
 {
 	int offset = 0;

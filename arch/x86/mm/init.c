@@ -27,6 +27,7 @@
 #include <asm/text-patching.h>
 #include <asm/memtype.h>
 #include <asm/paravirt.h>
+#include <asm/runpv_para.h>
 
 /*
  * We need to define the tracepoints somewhere, and tlb.c
@@ -802,6 +803,14 @@ void __init init_mem_mapping(void)
 
 	load_cr3(swapper_pg_dir);
 	__flush_tlb_all();
+
+	/*
+	* For RUNPV guests, pre-construct the shadow page table hierarchy
+	* for the direct mapping region before creating the actual mappings.
+	* This allows the host to skip redundant guest page table walks
+	* during subsequent page fault handling.
+	*/
+	runpv_init_direct_mapping_shadow(0, max_pfn);
 
 	x86_init.hyper.init_mem_mapping();
 
