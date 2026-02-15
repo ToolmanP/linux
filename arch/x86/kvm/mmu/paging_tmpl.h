@@ -653,7 +653,7 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 	struct kvm_mmu_page *sp = NULL;
 	struct kvm_shadow_walk_iterator it;
 	unsigned int direct_access, access;
-	int top_level, ret;
+	int top_level, ret, idx;
 	gfn_t base_gfn = fault->gfn;
 
 	WARN_ON_ONCE(gw->gfn != base_gfn);
@@ -694,6 +694,7 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 
 		table_gfn = gw->table_gfn[it.level - 2];
 		access = gw->pt_access[it.level - 2];
+    idx = kvm_vcpu_mmu_pages_srcu_begin(vcpu, table_gfn, it.level - 1);
 		sp = kvm_mmu_get_child_sp(vcpu, it.sptep, table_gfn,
 					  false, access);
 
@@ -715,22 +716,27 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 			 * expedites the process.
 			 */
 			if (sp->unsync_children &&
-			    mmu_sync_children(vcpu, sp, false))
+			    mmu_sync_children(vcpu, sp, false)) {
+        kvm_vcpu_mmu_pages_srcu_end(vcpu, table_gfn, it.level - 1, idx);
 				return RET_PF_RETRY;
+      }
 		}
 
 		/*
 		 * Verify that the gpte in the page we've just write
 		 * protected is still there.
 		 */
-		if (FNAME(gpte_changed)(vcpu, gw, it.level - 1))
+		if (FNAME(gpte_changed)(vcpu, gw, it.level - 1)) {
+      kvm_vcpu_mmu_pages_srcu_end(vcpu, table_gfn, it.level - 1, idx);
 			goto out_gpte_changed;
+    }
 
 		if (sp != ERR_PTR(-EEXIST))
 			link_shadow_page(vcpu, it.sptep, sp);
 
 		if (fault->write && table_gfn == fault->gfn)
 			fault->write_fault_to_shadow_pgtable = true;
+
 	}
 
 	/*
@@ -757,15 +763,19 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 
 		validate_direct_spte(vcpu, it.sptep, direct_access);
 
+    idx = kvm_vcpu_mmu_pages_srcu_begin(vcpu, base_gfn, it.level - 1);
 		sp = kvm_mmu_get_child_sp(vcpu, it.sptep, base_gfn,
 					  true, direct_access);
-		if (sp == ERR_PTR(-EEXIST))
+		if (sp == ERR_PTR(-EEXIST)) {
+      kvm_vcpu_mmu_pages_srcu_end(vcpu, base_gfn, it.level - 1, idx);
 			continue;
+    }
 
 		link_shadow_page(vcpu, it.sptep, sp);
 		if (fault->huge_page_disallowed)
 			account_nx_huge_page(vcpu->kvm, sp,
 					     fault->req_level >= it.level);
+    kvm_vcpu_mmu_pages_srcu_end(vcpu, base_gfn, it.level - 1, idx);
 	}
 
 	if (WARN_ON_ONCE(it.level != fault->goal_level))

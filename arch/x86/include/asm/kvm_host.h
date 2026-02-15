@@ -1278,7 +1278,15 @@ struct kvm_arch {
 	unsigned long n_max_mmu_pages;
 	unsigned int indirect_shadow_pages;
 	u8 mmu_valid_gen;
-	struct hlist_head mmu_page_hash[KVM_NUM_MMU_PAGES];
+
+  /* changed for readers, protected by rcu */
+  spinlock_t mmu_page_hash_locks[PT64_ROOT_MAX_LEVEL + 1][KVM_NUM_MMU_PAGES];
+	struct hlist_head mmu_page_hash[PT64_ROOT_MAX_LEVEL + 1][KVM_NUM_MMU_PAGES];
+  struct srcu_struct mmu_page_hash_srcu[PT64_ROOT_MAX_LEVEL + 1][KVM_NUM_MMU_PAGES];
+
+  /* changed for active mmu pages accounting */
+  spinlock_t active_mmu_pages_lock;
+  struct srcu_struct active_mmu_pages_srcu;
 	struct list_head active_mmu_pages;
 	struct list_head zapped_obsolete_pages;
 	/*
@@ -1292,6 +1300,7 @@ struct kvm_arch {
 	 * guest attempts to execute from the region then KVM obviously can't
 	 * create an NX huge page (without hanging the guest).
 	 */
+  spinlock_t possible_nx_huge_pages_lock;
 	struct list_head possible_nx_huge_pages;
 #ifdef CONFIG_KVM_EXTERNAL_WRITE_TRACKING
 	struct kvm_page_track_notifier_head track_notifier_head;
