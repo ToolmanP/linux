@@ -413,6 +413,7 @@ enum kvm_rmap_type {
 struct kvm_rmap_head {
 	unsigned long val;
   enum kvm_rmap_type type;
+  rwlock_t lock;
 };
 
 struct kvm_pio_request {

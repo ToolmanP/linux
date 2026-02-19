@@ -310,7 +310,7 @@ static int FNAME(walk_addr_generic)(struct guest_walker *walker,
 	int ret;
 	pt_element_t pte;
 	pt_element_t __user *ptep_user;
-	gfn_t table_gfn;
+	gfn_t table_gfn = 0;
 	u64 pt_access, pte_access;
 	unsigned index, accessed_dirty, pte_pkey;
 	u64 nested_access;
@@ -383,6 +383,7 @@ retry_walk:
 		walker->table_gfn[walker->level - 1] = table_gfn;
 		walker->pte_gpa[walker->level - 1] = pte_gpa;
 
+    kvm_vcpu_rmap_read_begin(vcpu, table_gfn);
 		real_gpa = kvm_translate_gpa(vcpu, mmu, gfn_to_gpa(table_gfn),
 					     nested_access, &walker->fault);
 
@@ -396,8 +397,10 @@ retry_walk:
 		 * information to fix the exit_qualification or exit_info_1
 		 * fields.
 		 */
-		if (unlikely(real_gpa == INVALID_GPA))
+		if (unlikely(real_gpa == INVALID_GPA)) {
+      kvm_vcpu_rmap_read_end(vcpu, table_gfn);
 			return 0;
+    }
 
 		slot = kvm_vcpu_gfn_to_memslot(vcpu, gpa_to_gfn(real_gpa));
 		if (!kvm_is_visible_memslot(slot))
@@ -437,8 +440,10 @@ retry_walk:
 
 		/* Convert to ACC_*_MASK flags for struct guest_walker.  */
 		walker->pt_access[walker->level - 1] = FNAME(gpte_access)(pt_access ^ walk_nx_mask);
+    kvm_vcpu_rmap_read_end(vcpu, table_gfn);
 	} while (!FNAME(is_last_gpte)(mmu, walker->level, pte));
 
+  table_gfn = 0;
 	pte_pkey = FNAME(gpte_pkeys)(vcpu, pte);
 	accessed_dirty = have_ad ? pte_access & PT_GUEST_ACCESSED_MASK : 0;
 
@@ -492,6 +497,9 @@ error:
 	walker->fault.vector = PF_VECTOR;
 	walker->fault.error_code_valid = true;
 	walker->fault.error_code = errcode;
+
+  if(table_gfn)
+    kvm_vcpu_rmap_read_end(vcpu, table_gfn);
 
 #if PTTYPE == PTTYPE_EPT
 	/*
@@ -848,9 +856,12 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 		return r;
 
   runpv_debugln("gfn=0x%llx", fault->gfn);
+  kvm_vcpu_rmap_write_begin(vcpu, fault->gfn);
 	r = kvm_faultin_pfn(vcpu, fault, walker.pte_access);
-	if (r != RET_PF_CONTINUE)
+	if (r != RET_PF_CONTINUE) {
+    kvm_vcpu_rmap_write_end(vcpu, fault->gfn);
 		return r;
+  }
 
 	/*
 	 * Do not change pte_access if the pfn is a mmio page, otherwise
@@ -885,6 +896,7 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 
 out_unlock:
 	write_unlock(&vcpu->kvm->mmu_lock);
+  kvm_vcpu_rmap_write_end(vcpu, fault->gfn);
 	kvm_release_pfn_clean(fault->pfn);
 	return r;
 }

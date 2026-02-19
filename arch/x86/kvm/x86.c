@@ -12688,6 +12688,7 @@ int memslot_rmap_alloc(struct kvm_memory_slot *slot, unsigned long npages)
 {
 	const int sz = sizeof(*slot->arch.rmap[0]);
 	int i;
+  int j;
 
 	for (i = 0; i < KVM_NR_PAGE_SIZES; ++i) {
 		int level = i + 1;
@@ -12701,6 +12702,8 @@ int memslot_rmap_alloc(struct kvm_memory_slot *slot, unsigned long npages)
 			memslot_rmap_free(slot);
 			return -ENOMEM;
 		}
+    for(j = 0; j < lpages; j++)
+      rwlock_init(&slot->arch.rmap[i][j].lock);
 	}
 
 	return 0;
