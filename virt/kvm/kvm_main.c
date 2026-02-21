@@ -630,6 +630,7 @@ static __always_inline int __kvm_handle_hva_range(struct kvm *kvm,
 			if (!locked) {
 				locked = true;
 				KVM_MMU_LOCK(kvm);
+        KVM_MMU_SEQ_WRITE_LOCK(kvm);
 				if (!IS_KVM_NULL_FN(range->on_lock))
 					range->on_lock(kvm, range->start, range->end);
 				if (IS_KVM_NULL_FN(range->handler))
@@ -644,6 +645,7 @@ static __always_inline int __kvm_handle_hva_range(struct kvm *kvm,
 
 	if (locked) {
 		KVM_MMU_UNLOCK(kvm);
+    KVM_MMU_SEQ_WRITE_UNLOCK(kvm);
 		if (!IS_KVM_NULL_FN(range->on_unlock))
 			range->on_unlock(kvm);
 	}
@@ -1156,6 +1158,7 @@ static struct kvm *kvm_create_vm(unsigned long type, const char *fdname)
 		return ERR_PTR(-ENOMEM);
 
 	KVM_MMU_LOCK_INIT(kvm);
+  KVM_MMU_SEQ_LOCK_INIT(kvm);
 	mmgrab(current->mm);
 	kvm->mm = current->mm;
 	kvm_eventfd_init(kvm);
