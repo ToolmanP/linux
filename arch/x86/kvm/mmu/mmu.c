@@ -4192,6 +4192,7 @@ static int mmu_alloc_direct_roots(struct kvm_vcpu *vcpu)
   int rcu_idx;
 
 	write_lock(&vcpu->kvm->mmu_lock);
+  read_lock(&vcpu->kvm->mmu_invalidate_seq_lock);
 	r = make_mmu_pages_available(vcpu);
 	if (r < 0)
 		goto out_unlock;
@@ -4230,6 +4231,7 @@ static int mmu_alloc_direct_roots(struct kvm_vcpu *vcpu)
 	/* root.pgd is ignored for direct MMUs. */
 	mmu->root.pgd = 0;
 out_unlock:
+  read_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
 	write_unlock(&vcpu->kvm->mmu_lock);
 	return r;
 }
@@ -4332,6 +4334,7 @@ static int mmu_alloc_shadow_roots(struct kvm_vcpu *vcpu)
 		return r;
 
 	write_lock(&vcpu->kvm->mmu_lock);
+  read_lock(&vcpu->kvm->mmu_invalidate_seq_lock);
 	r = make_mmu_pages_available(vcpu);
 	if (r < 0)
 		goto out_unlock;
@@ -4413,6 +4416,7 @@ static int mmu_alloc_shadow_roots(struct kvm_vcpu *vcpu)
 set_root_pgd:
 	mmu->root.pgd = root_pgd;
 out_unlock:
+  read_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
 	write_unlock(&vcpu->kvm->mmu_lock);
 
 	return r;
@@ -6721,6 +6725,7 @@ static void kvm_mmu_zap_all_fast(struct kvm *kvm)
 	lockdep_assert_held(&kvm->slots_lock);
 
 	write_lock(&kvm->mmu_lock);
+  write_lock(&kvm->mmu_invalidate_seq_lock);
 	trace_kvm_mmu_zap_all_fast(kvm);
 
 	/*
@@ -6752,7 +6757,7 @@ static void kvm_mmu_zap_all_fast(struct kvm *kvm)
 	kvm_make_all_cpus_request(kvm, KVM_REQ_MMU_FREE_OBSOLETE_ROOTS);
 
 	kvm_zap_obsolete_pages(kvm);
-
+  write_unlock(&kvm->mmu_invalidate_seq_lock);
 	write_unlock(&kvm->mmu_lock);
 
 	/*
