@@ -705,8 +705,10 @@ struct kvm_memslots {
 struct kvm {
 #ifdef KVM_HAVE_MMU_RWLOCK
 	rwlock_t mmu_lock;
+  rwlock_t mmu_invalidate_seq_lock;
 #else
 	spinlock_t mmu_lock;
+  spinlock_t mmu_invalidate_seq_lock;
 #endif /* KVM_HAVE_MMU_RWLOCK */
 
 	struct mutex slots_lock;

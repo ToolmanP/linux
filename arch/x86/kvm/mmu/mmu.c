@@ -4201,6 +4201,7 @@ static int mmu_alloc_direct_roots(struct kvm_vcpu *vcpu)
   int rcu_idx;
 
 	write_lock(&vcpu->kvm->mmu_lock);
+  read_lock(&vcpu->kvm->mmu_invalidate_seq_lock);
 	r = make_mmu_pages_available(vcpu);
 	if (r < 0)
 		goto out_unlock;
@@ -4239,6 +4240,7 @@ static int mmu_alloc_direct_roots(struct kvm_vcpu *vcpu)
 	/* root.pgd is ignored for direct MMUs. */
 	mmu->root.pgd = 0;
 out_unlock:
+  read_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
 	write_unlock(&vcpu->kvm->mmu_lock);
 	return r;
 }
@@ -4341,6 +4343,7 @@ static int mmu_alloc_shadow_roots(struct kvm_vcpu *vcpu)
 		return r;
 
 	write_lock(&vcpu->kvm->mmu_lock);
+  read_lock(&vcpu->kvm->mmu_invalidate_seq_lock);
 	r = make_mmu_pages_available(vcpu);
 	if (r < 0)
 		goto out_unlock;
@@ -4422,6 +4425,7 @@ static int mmu_alloc_shadow_roots(struct kvm_vcpu *vcpu)
 set_root_pgd:
 	mmu->root.pgd = root_pgd;
 out_unlock:
+  read_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
 	write_unlock(&vcpu->kvm->mmu_lock);
 
 	return r;
@@ -6727,6 +6731,7 @@ static void kvm_mmu_zap_all_fast(struct kvm *kvm)
 	lockdep_assert_held(&kvm->slots_lock);
 
 	write_lock(&kvm->mmu_lock);
+  write_lock(&kvm->mmu_invalidate_seq_lock);
 	trace_kvm_mmu_zap_all_fast(kvm);
 
 	/*
@@ -6758,7 +6763,7 @@ static void kvm_mmu_zap_all_fast(struct kvm *kvm)
 	kvm_make_all_cpus_request(kvm, KVM_REQ_MMU_FREE_OBSOLETE_ROOTS);
 
 	kvm_zap_obsolete_pages(kvm);
-
+  write_unlock(&kvm->mmu_invalidate_seq_lock);
 	write_unlock(&kvm->mmu_lock);
 
 	/*
@@ -6897,6 +6902,7 @@ static void __kvm_mark_gfn_range(struct kvm *kvm, gfn_t gfn_start, gfn_t gfn_end
     int level, enum kvm_rmap_type type)
 {
   bool flush;
+  write_lock(&kvm->mmu_invalidate_seq_lock);
 	kvm_mmu_invalidate_begin(kvm, 0, -1ul);
 
 	flush = kvm_rmap_mark_gfn_range(kvm, gfn_start, gfn_end, level, type);
@@ -6908,7 +6914,7 @@ static void __kvm_mark_gfn_range(struct kvm *kvm, gfn_t gfn_start, gfn_t gfn_end
 		kvm_flush_remote_tlbs_range(kvm, gfn_start, gfn_end - gfn_start);
 
 	kvm_mmu_invalidate_end(kvm, 0, -1ul);
-
+  write_unlock(&kvm->mmu_invalidate_seq_lock);
 }
 
 static void __kvm_vcpu_mark_gfn_range(struct kvm_vcpu *vcpu, gfn_t gfn_start, gfn_t gfn_end, int level, enum kvm_rmap_type type)
@@ -6919,6 +6925,7 @@ static void __kvm_vcpu_mark_gfn_range(struct kvm_vcpu *vcpu, gfn_t gfn_start, gf
 static void __kvm_zap_gfn_range(struct kvm *kvm, gfn_t gfn_start, gfn_t gfn_end)
 {
   bool flush;
+  write_lock(&kvm->mmu_invalidate_seq_lock);
 	kvm_mmu_invalidate_begin(kvm, 0, -1ul);
 
 	flush = kvm_rmap_zap_gfn_range(kvm, gfn_start, gfn_end);
@@ -6930,6 +6937,7 @@ static void __kvm_zap_gfn_range(struct kvm *kvm, gfn_t gfn_start, gfn_t gfn_end)
 		kvm_flush_remote_tlbs_range(kvm, gfn_start, gfn_end - gfn_start);
 
 	kvm_mmu_invalidate_end(kvm, 0, -1ul);
+  write_unlock(&kvm->mmu_invalidate_seq_lock);
 
 }
 
