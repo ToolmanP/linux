@@ -88,6 +88,7 @@ struct guest_walker {
 	bool pte_writable[PT_MAX_FULL_LEVELS];
 	unsigned int pt_access[PT_MAX_FULL_LEVELS];
 	unsigned int pte_access;
+  struct kvm_mmu_page *path[PT_MAX_FULL_LEVELS];
 	gfn_t gfn;
 	struct x86_exception fault;
 };
@@ -693,8 +694,11 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 		goto out_gpte_changed;
 	}
 
-	for_each_shadow_entry(vcpu, fault->addr, it) {
+	for_each_shadow_entry_locked(vcpu, fault->addr, it) {
 		gfn_t table_gfn;
+
+    if(it.obsolete)
+      goto out_sp_obsolete;
 
 		clear_sp_write_flooding_count(it.sptep);
 		if (it.level == gw->level)
@@ -706,29 +710,29 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 		sp = kvm_mmu_get_child_sp(vcpu, it.sptep, table_gfn,
 					  false, access);
 
-		if (sp != ERR_PTR(-EEXIST)) {
-			/*
-			 * We must synchronize the pagetable before linking it
-			 * because the guest doesn't need to flush tlb when
-			 * the gpte is changed from non-present to present.
-			 * Otherwise, the guest may use the wrong mapping.
-			 *
-			 * For PG_LEVEL_4K, kvm_mmu_get_page() has already
-			 * synchronized it transiently via kvm_sync_page().
-			 *
-			 * For higher level pagetable, we synchronize it via
-			 * the slower mmu_sync_children().  If it needs to
-			 * break, some progress has been made; return
-			 * RET_PF_RETRY and retry on the next #PF.
-			 * KVM_REQ_MMU_SYNC is not necessary but it
-			 * expedites the process.
-			 */
-			if (sp->unsync_children &&
-			    mmu_sync_children(vcpu, sp, false)) {
-        kvm_vcpu_mmu_pages_srcu_end(vcpu, table_gfn, it.level - 1, idx);
-				return RET_PF_RETRY;
-      }
-		}
+		// if (sp != ERR_PTR(-EEXIST)) {
+		// 	/*
+		// 	 * We must synchronize the pagetable before linking it
+		// 	 * because the guest doesn't need to flush tlb when
+		// 	 * the gpte is changed from non-present to present.
+		// 	 * Otherwise, the guest may use the wrong mapping.
+		// 	 *
+		// 	 * For PG_LEVEL_4K, kvm_mmu_get_page() has already
+		// 	 * synchronized it transiently via kvm_sync_page().
+		// 	 *
+		// 	 * For higher level pagetable, we synchronize it via
+		// 	 * the slower mmu_sync_children().  If it needs to
+		// 	 * break, some progress has been made; return
+		// 	 * RET_PF_RETRY and retry on the next #PF.
+		// 	 * KVM_REQ_MMU_SYNC is not necessary but it
+		// 	 * expedites the process.
+		// 	 */
+		// 	if (sp->unsync_children &&
+		// 	    mmu_sync_children2(vcpu, sp, false)) {
+		//       kvm_vcpu_mmu_pages_srcu_end(vcpu, table_gfn, it.level - 1, idx);
+		// 		return RET_PF_RETRY;
+		//     }
+		// }
 
 		/*
 		 * Verify that the gpte in the page we've just write
@@ -739,8 +743,23 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 			goto out_gpte_changed;
     }
 
-		if (sp != ERR_PTR(-EEXIST))
+		if (sp != ERR_PTR(-EEXIST)) {
+
+      if(sp_upgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep))) {
+        sp_downgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep));
+        goto out_sp_obsolete;
+      }
+
+      if(sp_write_lock(vcpu->kvm, sptep_to_sp(it.sptep))) {
+        sp_write_unlock(vcpu->kvm, sptep_to_sp(it.sptep));
+        goto out_sp_obsolete;
+      }
+
 			link_shadow_page(vcpu, it.sptep, sp);
+
+      if(sp_downgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep)))
+        goto out_sp_obsolete;
+    }
 
 		if (fault->write && table_gfn == fault->gfn)
 			fault->write_fault_to_shadow_pgtable = true;
@@ -757,7 +776,7 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 
 	trace_kvm_mmu_spte_requested(fault);
 
-	for (; shadow_walk_okay(&it); shadow_walk_next(&it)) {
+	for (; shadow_walk_okay_locked(&it); shadow_walk_next(&it)) {
 		/*
 		 * We cannot overwrite existing page tables with an NX
 		 * large page, as the leaf could be executable.
@@ -779,26 +798,51 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 			continue;
     }
 
-		link_shadow_page(vcpu, it.sptep, sp);
+    if(sp_upgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep))) {
+      sp_downgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep));
+      goto out_sp_obsolete;
+    }
+
+    if(sp_write_lock(vcpu->kvm, sptep_to_sp(it.sptep))) {
+      sp_write_unlock(vcpu->kvm, sptep_to_sp(it.sptep));
+      goto out_sp_obsolete;
+    }
+
+    link_shadow_page(vcpu, it.sptep, sp);
+
 		if (fault->huge_page_disallowed)
 			account_nx_huge_page(vcpu->kvm, sp,
 					     fault->req_level >= it.level);
+
+    if(sp_downgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep)))
+      goto out_sp_obsolete;
+
     kvm_vcpu_mmu_pages_srcu_end(vcpu, base_gfn, it.level - 1, idx);
 	}
 
-	if (WARN_ON_ONCE(it.level != fault->goal_level))
+
+	if (WARN_ON_ONCE(it.level != fault->goal_level)) {
+    shadow_walk_end(&it);
 		return -EFAULT;
+  }
+
+  if(sp_upgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep))) {
+    sp_downgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep));
+    goto out_sp_obsolete;
+  }
 
   runpv_debugln("gfn=0x%llx->base_gfn=0x%llx->pfn=0x%llx", fault->gfn, base_gfn, fault->pfn);
 
 	ret = mmu_set_spte(vcpu, fault->slot, it.sptep, gw->pte_access,
 			   base_gfn, fault->pfn, fault);
-	if (ret == RET_PF_SPURIOUS)
-		return ret;
 
-	FNAME(pte_prefetch)(vcpu, gw, it.sptep);
+  sp_downgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep));
+
+	// FNAME(pte_prefetch)(vcpu, gw, it.sptep);
 	return ret;
 
+out_sp_obsolete:
+  shadow_walk_end(&it);
 out_gpte_changed:
 	return RET_PF_RETRY;
 }

@@ -173,7 +173,7 @@ static struct kvm_mmu_page *tdp_mmu_next_root(struct kvm *kvm,
  * is guaranteed to be stable.
  */
 #define for_each_tdp_mmu_root(_kvm, _root, _as_id)			\
-	list_for_each_entry(_root, &_kvm->arch.tdp_mmu_roots, link)	\
+	list_for_each_entry(_root, &_kvm->arch.tdp_mmu_roots, active_link)	\
 		if (kvm_lockdep_assert_mmu_lock_held(_kvm, false) &&	\
 		    kvm_mmu_page_as_id(_root) != _as_id) {		\
 		} else
@@ -272,7 +272,7 @@ static void tdp_unaccount_mmu_page(struct kvm *kvm, struct kvm_mmu_page *sp)
 }
 
 /**
- * tdp_mmu_unlink_sp() - Remove a shadow page from the list of used pages
+ * tdp_mmu_un_sp() - Remove a shadow page from the list of used pages
  *
  * @kvm: kvm instance
  * @sp: the page to be removed
@@ -280,7 +280,7 @@ static void tdp_unaccount_mmu_page(struct kvm *kvm, struct kvm_mmu_page *sp)
  *	    the MMU lock and the operation must synchronize with other
  *	    threads that might be adding or removing pages.
  */
-static void tdp_mmu_unlink_sp(struct kvm *kvm, struct kvm_mmu_page *sp,
+static void tdp_mmu_un_sp(struct kvm *kvm, struct kvm_mmu_page *sp,
 			      bool shared)
 {
 	tdp_unaccount_mmu_page(kvm, sp);
@@ -326,7 +326,7 @@ static void handle_removed_pt(struct kvm *kvm, tdp_ptep_t pt, bool shared)
 
 	trace_kvm_mmu_prepare_zap_page(sp);
 
-	tdp_mmu_unlink_sp(kvm, sp, shared);
+	tdp_mmu_un_sp(kvm, sp, shared);
 
 	for (i = 0; i < SPTE_ENT_PER_PAGE; i++) {
 		tdp_ptep_t sptep = pt + i;
@@ -1001,7 +1001,7 @@ static int tdp_mmu_map_handle_target_level(struct kvm_vcpu *vcpu,
 }
 
 /*
- * tdp_mmu_link_sp - Replace the given spte with an spte pointing to the
+ * tdp_mmu__sp - Replace the given spte with an spte pointing to the
  * provided page table.
  *
  * @kvm: kvm instance
@@ -1012,7 +1012,7 @@ static int tdp_mmu_map_handle_target_level(struct kvm_vcpu *vcpu,
  * Returns: 0 if the new page table was installed. Non-0 if the page table
  *          could not be installed (e.g. the atomic compare-exchange failed).
  */
-static int tdp_mmu_link_sp(struct kvm *kvm, struct tdp_iter *iter,
+static int tdp_mmu__sp(struct kvm *kvm, struct tdp_iter *iter,
 			   struct kvm_mmu_page *sp, bool shared)
 {
 	u64 spte = make_nonleaf_spte(sp->spt, !kvm_ad_enabled());
@@ -1085,7 +1085,7 @@ int kvm_tdp_mmu_map(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 		if (is_shadow_present_pte(iter.old_spte))
 			r = tdp_mmu_split_huge_page(kvm, &iter, sp, true);
 		else
-			r = tdp_mmu_link_sp(kvm, &iter, sp, true);
+			r = tdp_mmu__sp(kvm, &iter, sp, true);
 
 		/*
 		 * Force the guest to retry if installing an upper level SPTE
@@ -1389,7 +1389,7 @@ static int tdp_mmu_split_huge_page(struct kvm *kvm, struct tdp_iter *iter,
 
 	/*
 	 * No need for atomics when writing to sp->spt since the page table has
-	 * not been linked in yet and thus is not reachable from any other CPU.
+	 * not been ed in yet and thus is not reachable from any other CPU.
 	 */
 	for (i = 0; i < SPTE_ENT_PER_PAGE; i++)
 		sp->spt[i] = make_huge_page_split_spte(kvm, huge_spte, sp->role, i);
@@ -1402,12 +1402,12 @@ static int tdp_mmu_split_huge_page(struct kvm *kvm, struct tdp_iter *iter,
 	 * correctness standpoint since the translation will be the same either
 	 * way.
 	 */
-	ret = tdp_mmu_link_sp(kvm, iter, sp, shared);
+	ret = tdp_mmu__sp(kvm, iter, sp, shared);
 	if (ret)
 		goto out;
 
 	/*
-	 * tdp_mmu_link_sp_atomic() will handle subtracting the huge page we
+	 * tdp_mmu__sp_atomic() will handle subtracting the huge page we
 	 * are overwriting from the page stats. But we have to manually update
 	 * the page stats with the new present child pages.
 	 */
