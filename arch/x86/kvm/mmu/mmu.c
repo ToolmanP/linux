@@ -2564,16 +2564,16 @@ static int mmu_sync_children(struct kvm_vcpu *vcpu,
 			flush |= kvm_sync_page(vcpu, sp, &invalid_list) > 0;
 			mmu_pages_clear_parents(&parents);
 		}
-		if (need_resched() || rwlock_needbreak(&vcpu->kvm->mmu_lock)) {
-			kvm_mmu_remote_flush_or_zap(vcpu->kvm, &invalid_list, flush);
-			if (!can_yield) {
-				kvm_make_request(KVM_REQ_MMU_SYNC, vcpu);
-				return -EINTR;
-			}
-
-			cond_resched_rwlock_write(&vcpu->kvm->mmu_lock);
-			flush = false;
-		}
+		// if (need_resched() || rwlock_needbreak(&vcpu->kvm->mmu_lock)) {
+		// 	kvm_mmu_remote_flush_or_zap(vcpu->kvm, &invalid_list, flush);
+		// 	if (!can_yield) {
+		// 		kvm_make_request(KVM_REQ_MMU_SYNC, vcpu);
+		// 		return -EINTR;
+		// 	}
+		//
+		// 	cond_resched_rwlock_write(&vcpu->kvm->mmu_lock);
+		// 	flush = false;
+		// }
 	}
 
 	kvm_mmu_remote_flush_or_zap(vcpu->kvm, &invalid_list, flush);
@@ -3314,7 +3314,6 @@ int kvm_mmu_unprotect_page(struct kvm *kvm, gfn_t gfn)
   int idx;
 
 	r = 0;
-	write_lock(&kvm->mmu_lock);
   /* NOTE: may take: mmu_page_account_lock */
   for_each_level(level) {
     idx = kvm_mmu_pages_srcu_begin(kvm, gfn, level);
@@ -3325,7 +3324,6 @@ int kvm_mmu_unprotect_page(struct kvm *kvm, gfn_t gfn)
     kvm_mmu_pages_srcu_end(kvm, gfn, level, idx);
   }
 	kvm_mmu_commit_zap_page(kvm, &invalid_list);
-	write_unlock(&kvm->mmu_lock);
 
 	return r;
 }
@@ -4133,10 +4131,15 @@ static void mmu_free_root_page(struct kvm *kvm, hpa_t *root_hpa,
 		return;
 
 	*root_hpa = INVALID_PAGE;
+  sp_write_lock(kvm, sp);
 	if (is_tdp_mmu_page(sp))
 		kvm_tdp_mmu_put_root(kvm, sp, false);
-	else if (!--sp->root_count && sp->role.invalid)
+	else if (!--sp->root_count && sp->role.invalid) {
+    sp_write_unlock(kvm, sp);
 		kvm_mmu_prepare_zap_page(kvm, sp, invalid_list);
+  } else {
+    sp_write_unlock(kvm, sp);
+  }
 
 }
 
@@ -4167,7 +4170,6 @@ void kvm_mmu_free_roots(struct kvm *kvm, struct kvm_mmu *mmu,
 			return;
 	}
 
-	write_lock(&kvm->mmu_lock);
   /* NOTE: account_mmu_page_lock -> hlist_page_lock -> sp->lock -> rmap->lock */
 
 	for (i = 0; i < KVM_MMU_NUM_PREV_ROOTS; i++)
@@ -4195,7 +4197,6 @@ void kvm_mmu_free_roots(struct kvm *kvm, struct kvm_mmu *mmu,
 	}
 
 	kvm_mmu_commit_zap_page(kvm, &invalid_list);
-	write_unlock(&kvm->mmu_lock);
 }
 EXPORT_SYMBOL_GPL(kvm_mmu_free_roots);
 
@@ -4400,7 +4401,6 @@ static int mmu_alloc_shadow_roots(struct kvm_vcpu *vcpu)
 	if (r)
 		return r;
 
-	write_lock(&vcpu->kvm->mmu_lock);
   read_lock(&vcpu->kvm->mmu_invalidate_seq_lock);
 	r = make_mmu_pages_available(vcpu);
 	if (r < 0)
@@ -4480,7 +4480,6 @@ set_root_pgd:
 	mmu->root.pgd = root_pgd;
 out_unlock:
   read_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
-	write_unlock(&vcpu->kvm->mmu_lock);
 
 	return r;
 }
@@ -4594,7 +4593,6 @@ static bool is_unsync_root(hpa_t root)
 
 void kvm_mmu_sync_roots(struct kvm_vcpu *vcpu)
 {
-	int i;
 	struct kvm_mmu_page *sp;
 
 	if (vcpu->arch.mmu->root_role.direct)
@@ -4613,24 +4611,21 @@ void kvm_mmu_sync_roots(struct kvm_vcpu *vcpu)
 
 		sp = root_to_sp(root);
 
-		write_lock(&vcpu->kvm->mmu_lock);
-		mmu_sync_children(vcpu, sp, true);
-		write_unlock(&vcpu->kvm->mmu_lock);
+		// write_lock(&vcpu->kvm->mmu_lock);
+		// mmu_sync_children(vcpu, sp, true);
+		// write_unlock(&vcpu->kvm->mmu_lock);
 		return;
 	}
 
-	write_lock(&vcpu->kvm->mmu_lock);
+	// for (i = 0; i < 4; ++i) {
+	// 	hpa_t root = vcpu->arch.mmu->pae_root[i];
+	//
+	// 	if (IS_VALID_PAE_ROOT(root)) {
+	// 		sp = spte_to_child_sp(root);
+	// 		mmu_sync_children(vcpu, sp, true);
+	// 	}
+	// }
 
-	for (i = 0; i < 4; ++i) {
-		hpa_t root = vcpu->arch.mmu->pae_root[i];
-
-		if (IS_VALID_PAE_ROOT(root)) {
-			sp = spte_to_child_sp(root);
-			mmu_sync_children(vcpu, sp, true);
-		}
-	}
-
-	write_unlock(&vcpu->kvm->mmu_lock);
 }
 
 void kvm_mmu_sync_prev_roots(struct kvm_vcpu *vcpu)
@@ -6287,7 +6282,6 @@ void kvm_mmu_track_write(struct kvm_vcpu *vcpu, gpa_t gpa, const u8 *new,
 	if (!READ_ONCE(vcpu->kvm->arch.indirect_shadow_pages))
 		return;
 
-	write_lock(&vcpu->kvm->mmu_lock);
 
 	gentry = mmu_pte_write_fetch_gpte(vcpu, &gpa, &bytes);
 
@@ -6320,7 +6314,6 @@ void kvm_mmu_track_write(struct kvm_vcpu *vcpu, gpa_t gpa, const u8 *new,
     kvm_vcpu_mmu_pages_srcu_end(vcpu, gfn, level, idx);
   }
 	kvm_mmu_remote_flush_or_zap(vcpu->kvm, &invalid_list, flush);
-	write_unlock(&vcpu->kvm->mmu_lock);
 }
 
 int noinline kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa, u64 error_code,
@@ -6413,7 +6406,6 @@ static void __kvm_mmu_invalidate_addr(struct kvm_vcpu *vcpu, struct kvm_mmu *mmu
 	if (!VALID_PAGE(root_hpa))
 		return;
 
-	write_lock(&vcpu->kvm->mmu_lock);
 	for_each_shadow_entry_using_root(vcpu, root_hpa, addr, iterator) {
 		// struct kvm_mmu_page *sp = sptep_to_sp(iterator.sptep);
 
@@ -6429,7 +6421,6 @@ static void __kvm_mmu_invalidate_addr(struct kvm_vcpu *vcpu, struct kvm_mmu *mmu
 		// if (!sp->unsync_children)
 		// 	break;
 	}
-	write_unlock(&vcpu->kvm->mmu_lock);
 }
 
 void kvm_mmu_invalidate_addr(struct kvm_vcpu *vcpu, struct kvm_mmu *mmu,
@@ -6554,14 +6545,14 @@ static __always_inline bool __walk_slot_rmaps(struct kvm *kvm,
 			flush |= fn(kvm, iterator.rmap, slot);
       ___kvm_rmap_write_end(iterator.rmap);
     }
-		if (need_resched() || rwlock_needbreak(&kvm->mmu_lock)) {
-			if (flush && flush_on_yield) {
-				kvm_flush_remote_tlbs_range(kvm, start_gfn,
-							    iterator.gfn - start_gfn + 1);
-				flush = false;
-			}
-			cond_resched_rwlock_write(&kvm->mmu_lock);
-		}
+		// if (need_resched() || rwlock_needbreak(&kvm->mmu_lock)) {
+		// 	if (flush && flush_on_yield) {
+		// 		kvm_flush_remote_tlbs_range(kvm, start_gfn,
+		// 					    iterator.gfn - start_gfn + 1);
+		// 		flush = false;
+		// 	}
+		// 	cond_resched_rwlock_write(&kvm->mmu_lock);
+		// }
 	}
 
 	return flush;
@@ -6583,14 +6574,14 @@ static __always_inline bool __walk_slot_rmaps_lockless(struct kvm *kvm,
 		if (iterator.rmap)
 			flush |= fn(kvm, iterator.rmap, slot);
     
-		if (need_resched() || rwlock_needbreak(&kvm->mmu_lock)) {
-			if (flush && flush_on_yield) {
-				kvm_flush_remote_tlbs_range(kvm, start_gfn,
-							    iterator.gfn - start_gfn + 1);
-				flush = false;
-			}
-			cond_resched_rwlock_write(&kvm->mmu_lock);
-		}
+		// if (need_resched() || rwlock_needbreak(&kvm->mmu_lock)) {
+		// 	if (flush && flush_on_yield) {
+		// 		kvm_flush_remote_tlbs_range(kvm, start_gfn,
+		// 					    iterator.gfn - start_gfn + 1);
+		// 		flush = false;
+		// 	}
+		// 	cond_resched_rwlock_write(&kvm->mmu_lock);
+		// }
 	}
 
 	return flush;
@@ -6741,13 +6732,13 @@ restart:
 		 * loaded a new root, i.e. the shadow pages being zapped cannot
 		 * be in active use by the guest.
 		 */
-		if (batch >= BATCH_ZAP_PAGES &&
-      (need_resched() || rwlock_needbreak(&kvm->mmu_lock))) {
-      srcu_read_unlock(&kvm->arch.active_mmu_pages_srcu, idx);
-      cond_resched_rwlock_write(&kvm->mmu_lock);
-			batch = 0;
-			goto restart;
-		}
+		// if (batch >= BATCH_ZAP_PAGES &&
+		//     (need_resched() || rwlock_needbreak(&kvm->mmu_lock))) {
+		//     srcu_read_unlock(&kvm->arch.active_mmu_pages_srcu, idx);
+		//     cond_resched_rwlock_write(&kvm->mmu_lock);
+		// 	batch = 0;
+		// 	goto restart;
+		// }
 
     sp_read_unlock(kvm, sp);
 		unstable = __kvm_mmu_prepare_zap_page(kvm, sp,
@@ -6783,7 +6774,6 @@ static void kvm_mmu_zap_all_fast(struct kvm *kvm)
 {
 	lockdep_assert_held(&kvm->slots_lock);
 
-	write_lock(&kvm->mmu_lock);
   write_lock(&kvm->mmu_invalidate_seq_lock);
 	trace_kvm_mmu_zap_all_fast(kvm);
 
@@ -6817,7 +6807,6 @@ static void kvm_mmu_zap_all_fast(struct kvm *kvm)
 
 	kvm_zap_obsolete_pages(kvm);
   write_unlock(&kvm->mmu_invalidate_seq_lock);
-	write_unlock(&kvm->mmu_lock);
 
 	/*
 	 * Zap the invalidated TDP MMU roots, all SPTEs must be dropped before
@@ -7003,9 +6992,7 @@ void kvm_zap_gfn_range(struct kvm *kvm, gfn_t gfn_start, gfn_t gfn_end)
 	if (WARN_ON_ONCE(gfn_end <= gfn_start))
 		return;
 
-	write_lock(&kvm->mmu_lock);
   __kvm_zap_gfn_range(kvm, gfn_start, gfn_end);
-	write_unlock(&kvm->mmu_lock);
 }
 
 static bool slot_rmap_write_protect(struct kvm *kvm,
@@ -7020,10 +7007,10 @@ void kvm_mmu_slot_remove_write_access(struct kvm *kvm,
 				      int start_level)
 {
 	if (kvm_memslots_have_rmaps(kvm)) {
-		write_lock(&kvm->mmu_lock);
+		// write_lock(&kvm->mmu_lock);
 		walk_slot_rmaps(kvm, memslot, slot_rmap_write_protect,
 				start_level, KVM_MAX_HUGEPAGE_LEVEL, false);
-		write_unlock(&kvm->mmu_lock);
+		// write_unlock(&kvm->mmu_lock);
 	}
 
 	if (tdp_mmu_enabled) {
@@ -7040,8 +7027,8 @@ static inline bool need_topup(struct kvm_mmu_memory_cache *cache, int min)
 
 static bool need_topup_split_caches_or_resched(struct kvm *kvm)
 {
-	if (need_resched() || rwlock_needbreak(&kvm->mmu_lock))
-		return true;
+	// if (need_resched() || rwlock_needbreak(&kvm->mmu_lock))
+	// 	return true;
 
 	/*
 	 * In the worst case, SPLIT_DESC_CACHE_MIN_NR_OBJECTS descriptors are needed
@@ -7296,6 +7283,7 @@ void kvm_mmu_slot_try_split_huge_pages(struct kvm *kvm,
 	if (!tdp_mmu_enabled)
 		return;
 
+  BUG();
 	if (kvm_memslots_have_rmaps(kvm)) {
 		write_lock(&kvm->mmu_lock);
 		kvm_shadow_mmu_try_split_huge_pages(kvm, memslot, start, end, target_level);
@@ -7386,13 +7374,11 @@ void kvm_mmu_slot_leaf_clear_dirty(struct kvm *kvm,
 				   const struct kvm_memory_slot *memslot)
 {
 	if (kvm_memslots_have_rmaps(kvm)) {
-		write_lock(&kvm->mmu_lock);
 		/*
 		 * Clear dirty bits only on 4k SPTEs since the legacy MMU only
 		 * support dirty logging at a 4k granularity.
 		 */
 		walk_slot_rmaps_4k(kvm, memslot, __rmap_clear_dirty, false);
-		write_unlock(&kvm->mmu_lock);
 	}
 
 	if (tdp_mmu_enabled) {
@@ -7418,18 +7404,16 @@ static void kvm_mmu_zap_all(struct kvm *kvm)
 	int ign, idx;
   INIT_INVALID_LIST(invalid_list);
 
-	write_lock(&kvm->mmu_lock);
-restart:
   idx = srcu_read_lock(&kvm->arch.active_mmu_pages_srcu);
 	list_for_each_entry_rcu(sp, &kvm->arch.active_mmu_pages, active_link) {
 		// if (WARN_ON_ONCE(sp->role.invalid))
 		// 	continue;
 		__kvm_mmu_prepare_zap_page(kvm, sp, &invalid_list, &ign);
-		if (need_resched() || rwlock_needbreak(&kvm->mmu_lock)){
-      srcu_read_unlock(&kvm->arch.active_mmu_pages_srcu, idx);
-      cond_resched_rwlock_write(&kvm->mmu_lock);
-			goto restart;
-    }
+		// if (need_resched() || rwlock_needbreak(&kvm->mmu_lock)){
+		//     srcu_read_unlock(&kvm->arch.active_mmu_pages_srcu, idx);
+		//     cond_resched_rwlock_write(&kvm->mmu_lock);
+		// 	goto restart;
+		//   }
 	}
   srcu_read_unlock(&kvm->arch.active_mmu_pages_srcu, idx);
 	kvm_mmu_commit_zap_page(kvm, &invalid_list);
@@ -7437,7 +7421,6 @@ restart:
 	if (tdp_mmu_enabled)
 		kvm_tdp_mmu_zap_all(kvm);
 
-	write_unlock(&kvm->mmu_lock);
 }
 
 void kvm_arch_flush_shadow_all(struct kvm *kvm)
@@ -7509,7 +7492,7 @@ static unsigned long mmu_shrink_scan(struct shrinker *shrink,
 			continue;
 
 		idx = srcu_read_lock(&kvm->srcu);
-		write_lock(&kvm->mmu_lock);
+		// write_lock(&kvm->mmu_lock);
 
 		// if (kvm_has_zapped_obsolete_pages(kvm)) {
 		// 	kvm_mmu_commit_zap_page(kvm,
@@ -7519,8 +7502,7 @@ static unsigned long mmu_shrink_scan(struct shrinker *shrink,
 
 		freed = kvm_mmu_zap_oldest_mmu_pages(kvm, sc->nr_to_scan);
 
-unlock:
-		write_unlock(&kvm->mmu_lock);
+		// write_unlock(&kvm->mmu_lock);
 		srcu_read_unlock(&kvm->srcu, idx);
 
 		/*
@@ -7848,14 +7830,14 @@ static void kvm_recover_nx_huge_pages(struct kvm *kvm)
     }
 		WARN_ON_ONCE(sp->nx_huge_page_disallowed);
 
-		if (need_resched() || rwlock_needbreak(&kvm->mmu_lock)) {
-			kvm_mmu_remote_flush_or_zap(kvm, &invalid_list, flush);
-			rcu_read_unlock();
-
-			cond_resched_rwlock_write(&kvm->mmu_lock);
-			flush = false;
-			rcu_read_lock();
-		}
+		// if (need_resched() || rwlock_needbreak(&kvm->mmu_lock)) {
+		// 	kvm_mmu_remote_flush_or_zap(kvm, &invalid_list, flush);
+		// 	rcu_read_unlock();
+		//
+		// 	cond_resched_rwlock_write(&kvm->mmu_lock);
+		// 	flush = false;
+		// 	rcu_read_lock();
+		// }
 	}
 	kvm_mmu_remote_flush_or_zap(kvm, &invalid_list, flush);
 

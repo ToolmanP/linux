@@ -1282,6 +1282,7 @@ struct kvm_arch {
 	unsigned long n_requested_mmu_pages;
 	unsigned long n_max_mmu_pages;
 	unsigned int indirect_shadow_pages;
+  rwlock_t mmu_stat_lock;
 	u8 mmu_valid_gen;
 
   /* changed for readers, protected by rcu */

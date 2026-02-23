@@ -659,7 +659,7 @@ static void FNAME(pte_prefetch)(struct kvm_vcpu *vcpu, struct guest_walker *gw,
 static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 			 struct guest_walker *gw)
 {
-	struct kvm_mmu_page *sp = NULL;
+	struct kvm_mmu_page *sp = NULL, *parent = NULL;
 	struct kvm_shadow_walk_iterator it;
 	unsigned int direct_access, access;
 	int top_level, ret, idx;
@@ -707,6 +707,7 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 		table_gfn = gw->table_gfn[it.level - 2];
 		access = gw->pt_access[it.level - 2];
     idx = kvm_vcpu_mmu_pages_srcu_begin(vcpu, table_gfn, it.level - 1);
+    parent = sptep_to_sp(it.sptep);
 		sp = kvm_mmu_get_child_sp(vcpu, it.sptep, table_gfn,
 					  false, access);
 
@@ -745,19 +746,19 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 
 		if (sp != ERR_PTR(-EEXIST)) {
 
-      if(sp_upgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep))) {
-        sp_downgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep));
+      if(sp_upgrade_lock(vcpu->kvm, parent)) {
+        sp_downgrade_lock(vcpu->kvm, parent);
         goto out_sp_obsolete;
       }
 
-      if(sp_write_lock(vcpu->kvm, sptep_to_sp(it.sptep))) {
-        sp_write_unlock(vcpu->kvm, sptep_to_sp(it.sptep));
+      if(sp_write_lock(vcpu->kvm, sp) {
+        sp_write_unlock(vcpu->kvm, sp);
         goto out_sp_obsolete;
       }
 
 			link_shadow_page(vcpu, it.sptep, sp);
 
-      if(sp_downgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep)))
+      if(sp_downgrade_lock(vcpu->kvm, parent))
         goto out_sp_obsolete;
     }
 
@@ -781,6 +782,10 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 		 * We cannot overwrite existing page tables with an NX
 		 * large page, as the leaf could be executable.
 		 */
+
+    if(it.obsolete)
+      goto out_sp_obsolete;
+
 		if (fault->nx_huge_page_workaround_enabled)
 			disallowed_hugepage_adjust(fault, *it.sptep, it.level);
 
@@ -791,20 +796,22 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 		validate_direct_spte(vcpu, it.sptep, direct_access);
 
     idx = kvm_vcpu_mmu_pages_srcu_begin(vcpu, base_gfn, it.level - 1);
+    parent = sptep_to_sp(it.sptep);
 		sp = kvm_mmu_get_child_sp(vcpu, it.sptep, base_gfn,
 					  true, direct_access);
+
 		if (sp == ERR_PTR(-EEXIST)) {
       kvm_vcpu_mmu_pages_srcu_end(vcpu, base_gfn, it.level - 1, idx);
 			continue;
     }
 
-    if(sp_upgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep))) {
-      sp_downgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep));
+    if(sp_upgrade_lock(vcpu->kvm, parent) {
+      sp_downgrade_lock(vcpu->kvm, parent);
       goto out_sp_obsolete;
     }
 
-    if(sp_write_lock(vcpu->kvm, sptep_to_sp(it.sptep))) {
-      sp_write_unlock(vcpu->kvm, sptep_to_sp(it.sptep));
+    if(sp_write_lock(vcpu->kvm, sp)) {
+      sp_write_unlock(vcpu->kvm, sp);
       goto out_sp_obsolete;
     }
 
@@ -814,20 +821,21 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 			account_nx_huge_page(vcpu->kvm, sp,
 					     fault->req_level >= it.level);
 
-    if(sp_downgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep)))
+    if(sp_downgrade_lock(vcpu->kvm, parent))
       goto out_sp_obsolete;
 
     kvm_vcpu_mmu_pages_srcu_end(vcpu, base_gfn, it.level - 1, idx);
 	}
 
+  parent = sptep_to_sp(it.sptep);
 
 	if (WARN_ON_ONCE(it.level != fault->goal_level)) {
     shadow_walk_end(&it);
 		return -EFAULT;
   }
 
-  if(sp_upgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep))) {
-    sp_downgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep));
+  if(sp_upgrade_lock(vcpu->kvm, parent)) {
+    sp_downgrade_lock(vcpu->kvm, parent);
     goto out_sp_obsolete;
   }
 
@@ -836,7 +844,8 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 	ret = mmu_set_spte(vcpu, fault->slot, it.sptep, gw->pte_access,
 			   base_gfn, fault->pfn, fault);
 
-  sp_downgrade_lock(vcpu->kvm, sptep_to_sp(it.sptep));
+  sp_downgrade_lock(vcpu->kvm, parent);
+  shadow_walk_end(&it);
 
 	// FNAME(pte_prefetch)(vcpu, gw, it.sptep);
 	return ret;
@@ -927,7 +936,6 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	}
 
 	r = RET_PF_RETRY;
-	write_lock(&vcpu->kvm->mmu_lock);
   read_lock(&vcpu->kvm->mmu_invalidate_seq_lock);
 
 	if (is_page_fault_stale(vcpu, fault))
@@ -941,7 +949,6 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 
 out_unlock:
   read_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
-	write_unlock(&vcpu->kvm->mmu_lock);
   kvm_vcpu_rmap_write_end(vcpu, fault->gfn);
 	kvm_release_pfn_clean(fault->pfn);
 	return r;
