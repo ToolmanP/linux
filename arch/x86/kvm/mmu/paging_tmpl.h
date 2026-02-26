@@ -899,7 +899,6 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	}
 
 	r = RET_PF_RETRY;
-	write_lock(&vcpu->kvm->mmu_lock);
   read_lock(&vcpu->kvm->mmu_invalidate_seq_lock);
 
 	if (is_page_fault_stale(vcpu, fault))
@@ -913,7 +912,6 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 
 out_unlock:
   read_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
-	write_unlock(&vcpu->kvm->mmu_lock);
 	kvm_release_pfn_clean(fault->pfn);
 	return r;
 }
