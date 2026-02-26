@@ -7399,6 +7399,20 @@ void kvm_mmu_vendor_module_exit(void)
 	shrinker_free(mmu_shrinker);
 }
 
+#ifdef CONFIG_KVM_RUNPV
+int kvm_mmu_post_init_vm(struct kvm *kvm)
+{
+  return 0;
+}
+void kvm_mmu_pre_destroy_vm(struct kvm *kvm)
+{
+
+}
+static int set_nx_huge_pages_recovery_param(const char *val, const struct kernel_param *kp)
+{
+	return param_set_uint(val, kp);
+}
+#else
 /*
  * Calculate the effective recovery period, accounting for '0' meaning "let KVM
  * select a halving time of 1 hour".  Returns true if recovery is enabled.
@@ -7609,6 +7623,7 @@ void kvm_mmu_pre_destroy_vm(struct kvm *kvm)
 	if (kvm->arch.nx_huge_page_recovery_thread)
 		kthread_stop(kvm->arch.nx_huge_page_recovery_thread);
 }
+#endif
 
 void runpv_mark_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order)
 {
