@@ -77,8 +77,6 @@ static void update_gfn_write_track(struct kvm_memory_slot *slot, gfn_t gfn,
 void __kvm_write_track_add_gfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 			       gfn_t gfn)
 {
-	lockdep_assert_held_write(&kvm->mmu_lock);
-
 	lockdep_assert_once(lockdep_is_held(&kvm->slots_lock) ||
 			    srcu_read_lock_held(&kvm->srcu));
 
@@ -100,8 +98,6 @@ void __kvm_write_track_add_gfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 void __kvm_write_track_remove_gfn(struct kvm *kvm,
 				  struct kvm_memory_slot *slot, gfn_t gfn)
 {
-	lockdep_assert_held_write(&kvm->mmu_lock);
-
 	lockdep_assert_once(lockdep_is_held(&kvm->slots_lock) ||
 			    srcu_read_lock_held(&kvm->srcu));
 
