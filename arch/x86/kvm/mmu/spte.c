@@ -144,6 +144,7 @@ bool make_spte(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
 	u64 spte = SPTE_MMU_PRESENT_MASK;
 	bool wrprot = false;
 
+  can_unsync = can_unsync && !IS_ENABLED(CONFIG_KVM_RUNPV);
 	WARN_ON_ONCE(!pte_access && !shadow_present_mask);
 
 	if (sp->role.ad_disabled)

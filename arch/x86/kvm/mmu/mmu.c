@@ -1936,7 +1936,8 @@ static void kvm_mmu_mark_parents_unsync(struct kvm_mmu_page *sp)
 {
 	u64 *sptep;
 	struct rmap_iterator iter;
-
+  if(IS_ENABLED(CONFIG_KVM_RUNPV))
+    panic("shall not invoked in runpv context.");
 	for_each_rmap_spte(&sp->parent_ptes, &iter, sptep) {
 		mark_unsync(sptep);
 	}
@@ -1946,11 +1947,23 @@ static void mark_unsync(u64 *spte)
 {
 	struct kvm_mmu_page *sp;
 
+  if(IS_ENABLED(CONFIG_KVM_RUNPV))
+    panic("shall not invoked in runpv context.");
+
 	sp = sptep_to_sp(spte);
 	if (__test_and_set_bit(spte_index(spte), sp->unsync_child_bitmap))
 		return;
 	if (sp->unsync_children++)
 		return;
+	kvm_mmu_mark_parents_unsync(sp);
+}
+
+static void kvm_unsync_page(struct kvm *kvm, struct kvm_mmu_page *sp)
+{
+	trace_kvm_mmu_unsync_page(sp);
+	++kvm->stat.mmu_unsync;
+	sp->unsync = 1;
+
 	kvm_mmu_mark_parents_unsync(sp);
 }
 
@@ -2713,6 +2726,14 @@ static void kvm_mmu_unlink_parents(struct kvm *kvm, struct kvm_mmu_page *sp)
 		drop_parent_pte(kvm, sp, sptep);
 }
 
+#ifdef CONFIG_KVM_RUNPV
+static int mmu_zap_unsync_children(struct kvm *kvm,
+				   struct kvm_mmu_page *parent,
+				   struct list_head *invalid_list)
+{
+  return 0;
+}
+#else
 static int mmu_zap_unsync_children(struct kvm *kvm,
 				   struct kvm_mmu_page *parent,
 				   struct list_head *invalid_list)
@@ -2736,6 +2757,7 @@ static int mmu_zap_unsync_children(struct kvm *kvm,
 
 	return zapped;
 }
+#endif
 
 static bool __kvm_mmu_prepare_zap_page(struct kvm *kvm,
 				       struct kvm_mmu_page *sp,
@@ -2956,15 +2978,6 @@ static int kvm_mmu_unprotect_page_virt(struct kvm_vcpu *vcpu, gva_t gva)
 	r = kvm_mmu_unprotect_page(vcpu->kvm, gpa >> PAGE_SHIFT);
 
 	return r;
-}
-
-static void kvm_unsync_page(struct kvm *kvm, struct kvm_mmu_page *sp)
-{
-	trace_kvm_mmu_unsync_page(sp);
-	++kvm->stat.mmu_unsync;
-	sp->unsync = 1;
-
-	kvm_mmu_mark_parents_unsync(sp);
 }
 
 /*
@@ -4146,6 +4159,12 @@ err_pml4:
 #endif
 }
 
+#ifdef CONFIG_KVM_RUNPV
+static bool is_unsync_root(hpa_t root)
+{
+  return false;
+}
+#else
 static bool is_unsync_root(hpa_t root)
 {
 	struct kvm_mmu_page *sp;
@@ -4180,6 +4199,7 @@ static bool is_unsync_root(hpa_t root)
 
 	return false;
 }
+#endif
 
 void kvm_mmu_sync_roots(struct kvm_vcpu *vcpu)
 {
@@ -5973,6 +5993,13 @@ emulate:
 }
 EXPORT_SYMBOL_GPL(kvm_mmu_page_fault);
 
+#ifdef CONFIG_KVM_RUNPV
+static void __kvm_mmu_invalidate_addr(struct kvm_vcpu *vcpu, struct kvm_mmu *mmu,
+				      u64 addr, hpa_t root_hpa){
+	vcpu_clear_mmio_info(vcpu, addr);
+  return;
+}
+#else
 static void __kvm_mmu_invalidate_addr(struct kvm_vcpu *vcpu, struct kvm_mmu *mmu,
 				      u64 addr, hpa_t root_hpa)
 {
@@ -6009,6 +6036,7 @@ static void __kvm_mmu_invalidate_addr(struct kvm_vcpu *vcpu, struct kvm_mmu *mmu
 	}
 	write_unlock(&vcpu->kvm->mmu_lock);
 }
+#endif
 
 void kvm_mmu_invalidate_addr(struct kvm_vcpu *vcpu, struct kvm_mmu *mmu,
 			     u64 addr, unsigned long roots)
