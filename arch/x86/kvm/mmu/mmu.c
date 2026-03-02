@@ -2100,9 +2100,9 @@ static bool sp_has_gptes(struct kvm_mmu_page *sp)
 		if (is_obsolete_sp((_kvm), (_sp))) {			\
 		} else
 
-#define for_each_gfn_valid_sp_with_gptes(_kvm, _sp, _gfn)		\
+#define for_each_gfn_valid_sp_with_gptes(_kvm, _sp, _gfn, _level)		\
 	for_each_valid_sp(_kvm, _sp,					\
-	  &(_kvm)->arch.mmu_page_hash[kvm_page_table_hashfn(_gfn)])	\
+	  &(_kvm)->arch.mmu_page_hash[(_level)][kvm_page_table_hashfn(_gfn)])	\
 		if ((_sp)->gfn != (_gfn) || !sp_has_gptes(_sp)) {} else
 
 static bool kvm_sync_page_check(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp)
@@ -2480,7 +2480,7 @@ static struct kvm_mmu_page *__kvm_mmu_get_shadow_page(struct kvm *kvm,
 	struct kvm_mmu_page *sp;
 	bool created = false;
 
-	sp_list = &kvm->arch.mmu_page_hash[kvm_page_table_hashfn(gfn)];
+	sp_list = &kvm->arch.mmu_page_hash[role.level][kvm_page_table_hashfn(gfn)];
 
 	sp = kvm_mmu_find_shadow_page(kvm, vcpu, gfn, sp_list, role);
 	if (!sp) {
@@ -2978,13 +2978,15 @@ int kvm_mmu_unprotect_page(struct kvm *kvm, gfn_t gfn)
   struct kvm_mmu_invalid_list invalid_list;
 	INIT_INVALID_LIST(invalid_list);
 	int r;
+  int level;
 
 	r = 0;
 	write_lock(&kvm->mmu_lock);
-	for_each_gfn_valid_sp_with_gptes(kvm, sp, gfn) {
-		r = 1;
-		kvm_mmu_prepare_zap_page(kvm, sp, &invalid_list);
-	}
+  for_each_level(level, 0, PT64_ROOT_MAX_LEVEL)
+    for_each_gfn_valid_sp_with_gptes(kvm, sp, gfn, level) {
+      r = 1;
+      kvm_mmu_prepare_zap_page(kvm, sp, &invalid_list);
+    }
 	kvm_mmu_commit_zap_page(kvm, &invalid_list);
 	write_unlock(&kvm->mmu_lock);
 
@@ -3017,6 +3019,7 @@ int mmu_try_to_unsync_pages(struct kvm *kvm, const struct kvm_memory_slot *slot,
 {
 	struct kvm_mmu_page *sp;
 	bool locked = false;
+  int level;
 
 	/*
 	 * Force write-protection if the page is being tracked.  Note, the page
@@ -3032,7 +3035,8 @@ int mmu_try_to_unsync_pages(struct kvm *kvm, const struct kvm_memory_slot *slot,
 	 * that case, KVM must complete emulation of the guest TLB flush before
 	 * allowing shadow pages to become unsync (writable by the guest).
 	 */
-	for_each_gfn_valid_sp_with_gptes(kvm, sp, gfn) {
+  for_each_level(level, 0, PT64_ROOT_MAX_LEVEL)
+	for_each_gfn_valid_sp_with_gptes(kvm, sp, gfn, level) {
 		if (!can_unsync)
 			return -EPERM;
 
@@ -3068,6 +3072,7 @@ int mmu_try_to_unsync_pages(struct kvm *kvm, const struct kvm_memory_slot *slot,
 		WARN_ON_ONCE(sp->role.level != PG_LEVEL_4K);
 		kvm_unsync_page(kvm, sp);
 	}
+
 	if (locked)
 		spin_unlock(&kvm->arch.mmu_unsync_pages_lock);
 
@@ -5906,7 +5911,7 @@ void kvm_mmu_track_write(struct kvm_vcpu *vcpu, gpa_t gpa, const u8 *new,
 	struct kvm_mmu_page *sp;
   struct kvm_mmu_invalid_list invalid_list;
 	u64 entry, gentry, *spte;
-	int npte;
+	int npte, level;
 	bool flush = false;
   INIT_INVALID_LIST(invalid_list);
 
@@ -5923,7 +5928,8 @@ void kvm_mmu_track_write(struct kvm_vcpu *vcpu, gpa_t gpa, const u8 *new,
 
 	++vcpu->kvm->stat.mmu_pte_write;
 
-	for_each_gfn_valid_sp_with_gptes(vcpu->kvm, sp, gfn) {
+  for_each_level(level, 0, PT64_ROOT_MAX_LEVEL)
+	for_each_gfn_valid_sp_with_gptes(vcpu->kvm, sp, gfn, level) {
 		if (detect_write_misaligned(sp, gpa, bytes) ||
 		      detect_write_flooding(sp)) {
 			kvm_mmu_prepare_zap_page(vcpu->kvm, sp, &invalid_list);
