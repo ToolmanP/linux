@@ -653,7 +653,7 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 	struct kvm_mmu_page *sp = NULL;
 	struct kvm_shadow_walk_iterator it;
 	unsigned int direct_access, access;
-	int top_level, ret;
+	int top_level, ret, rcu_idx;
 	gfn_t base_gfn = fault->gfn;
 
 	WARN_ON_ONCE(gw->gfn != base_gfn);
@@ -694,8 +694,10 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 
 		table_gfn = gw->table_gfn[it.level - 2];
 		access = gw->pt_access[it.level - 2];
+
+    rcu_idx = srcu_read_lock(&vcpu->kvm->arch.mmu_srcu);
 		sp = kvm_mmu_get_child_sp(vcpu, it.sptep, table_gfn,
-					  false, access);
+					  false, access, &rcu_idx);
 
 		if (sp != ERR_PTR(-EEXIST)) {
 			/*
@@ -723,12 +725,15 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 		 * Verify that the gpte in the page we've just write
 		 * protected is still there.
 		 */
-		if (FNAME(gpte_changed)(vcpu, gw, it.level - 1))
+		if (FNAME(gpte_changed)(vcpu, gw, it.level - 1)){
+      srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
 			goto out_gpte_changed;
+    }
 
 		if (sp != ERR_PTR(-EEXIST))
 			link_shadow_page(vcpu, it.sptep, sp);
 
+    srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
 		if (fault->write && table_gfn == fault->gfn)
 			fault->write_fault_to_shadow_pgtable = true;
 	}
@@ -756,16 +761,20 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 			break;
 
 		validate_direct_spte(vcpu, it.sptep, direct_access);
-
+    rcu_idx = srcu_read_lock(&vcpu->kvm->arch.mmu_srcu);
 		sp = kvm_mmu_get_child_sp(vcpu, it.sptep, base_gfn,
-					  true, direct_access);
-		if (sp == ERR_PTR(-EEXIST))
+					  true, direct_access, &rcu_idx);
+
+		if (sp == ERR_PTR(-EEXIST)) {
+      srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
 			continue;
+    }
 
 		link_shadow_page(vcpu, it.sptep, sp);
 		if (fault->huge_page_disallowed)
 			account_nx_huge_page(vcpu->kvm, sp,
 					     fault->req_level >= it.level);
+    srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
 	}
 
 	if (WARN_ON_ONCE(it.level != fault->goal_level))
