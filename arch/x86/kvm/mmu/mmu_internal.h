@@ -53,8 +53,9 @@ struct kvm_mmu_page {
 	 * Note, "link" through "spt" fit in a single 64 byte cache line on
 	 * 64-bit kernels, keep it that way unless there's a reason not to.
 	 */
-	struct list_head link;
+	struct list_head lru_link;
 	struct hlist_node hash_link;
+  struct list_head invalid_link;
 
 	bool tdp_mmu_page;
 	bool unsync;

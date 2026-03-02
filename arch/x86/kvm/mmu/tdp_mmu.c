@@ -89,7 +89,7 @@ void kvm_tdp_mmu_put_root(struct kvm *kvm, struct kvm_mmu_page *root,
 	KVM_BUG_ON(!is_tdp_mmu_page(root) || !root->role.invalid, kvm);
 
 	spin_lock(&kvm->arch.tdp_mmu_pages_lock);
-	list_del_rcu(&root->link);
+	list_del_rcu(&root->lru_link);
 	spin_unlock(&kvm->arch.tdp_mmu_pages_lock);
 	call_rcu(&root->rcu_head, tdp_mmu_free_sp_rcu_callback);
 }
@@ -114,11 +114,11 @@ static struct kvm_mmu_page *tdp_mmu_next_root(struct kvm *kvm,
 
 	if (prev_root)
 		next_root = list_next_or_null_rcu(&kvm->arch.tdp_mmu_roots,
-						  &prev_root->link,
-						  typeof(*prev_root), link);
+						  &prev_root->lru_link,
+						  typeof(*prev_root), lru_link);
 	else
 		next_root = list_first_or_null_rcu(&kvm->arch.tdp_mmu_roots,
-						   typeof(*next_root), link);
+						   typeof(*next_root), lru_link);
 
 	while (next_root) {
 		if ((!only_valid || !next_root->role.invalid) &&
@@ -126,7 +126,7 @@ static struct kvm_mmu_page *tdp_mmu_next_root(struct kvm *kvm,
 			break;
 
 		next_root = list_next_or_null_rcu(&kvm->arch.tdp_mmu_roots,
-				&next_root->link, typeof(*next_root), link);
+				&next_root->lru_link, typeof(*next_root), lru_link);
 	}
 
 	rcu_read_unlock();
@@ -173,7 +173,7 @@ static struct kvm_mmu_page *tdp_mmu_next_root(struct kvm *kvm,
  * is guaranteed to be stable.
  */
 #define for_each_tdp_mmu_root(_kvm, _root, _as_id)			\
-	list_for_each_entry(_root, &_kvm->arch.tdp_mmu_roots, link)	\
+	list_for_each_entry(_root, &_kvm->arch.tdp_mmu_roots, lru_link)	\
 		if (kvm_lockdep_assert_mmu_lock_held(_kvm, false) &&	\
 		    kvm_mmu_page_as_id(_root) != _as_id) {		\
 		} else
@@ -248,7 +248,7 @@ hpa_t kvm_tdp_mmu_get_vcpu_root_hpa(struct kvm_vcpu *vcpu)
 	refcount_set(&root->tdp_mmu_root_count, 2);
 
 	spin_lock(&kvm->arch.tdp_mmu_pages_lock);
-	list_add_rcu(&root->link, &kvm->arch.tdp_mmu_roots);
+	list_add_rcu(&root->lru_link, &kvm->arch.tdp_mmu_roots);
 	spin_unlock(&kvm->arch.tdp_mmu_pages_lock);
 
 out:
@@ -931,7 +931,7 @@ void kvm_tdp_mmu_invalidate_all_roots(struct kvm *kvm)
 	 * be other references to @kvm, i.e. nothing else can invalidate roots
 	 * or get/put references to roots.
 	 */
-	list_for_each_entry(root, &kvm->arch.tdp_mmu_roots, link) {
+	list_for_each_entry(root, &kvm->arch.tdp_mmu_roots, lru_link) {
 		/*
 		 * Note, invalid roots can outlive a memslot update!  Invalid
 		 * roots must be *zapped* before the memslot update completes,

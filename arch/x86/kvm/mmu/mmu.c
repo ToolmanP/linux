@@ -1901,7 +1901,8 @@ static void kvm_mmu_free_shadow_page(struct kvm_mmu_page *sp)
 	kvm_mmu_check_sptes_at_free(sp);
 
 	hlist_del(&sp->hash_link);
-	list_del(&sp->link);
+  list_del(&sp->lru_link);
+	list_del_init(&sp->invalid_link);
 	free_page((unsigned long)sp->spt);
 	if (!sp->role.direct)
 		free_page((unsigned long)sp->shadowed_translation);
@@ -2441,6 +2442,7 @@ static struct kvm_mmu_page *kvm_mmu_alloc_shadow_page(struct kvm *kvm,
 	set_page_private(virt_to_page(sp->spt), (unsigned long)sp);
 
 	INIT_LIST_HEAD(&sp->possible_nx_huge_page_link);
+  INIT_LIST_HEAD(&sp->invalid_link);
 
 	/*
 	 * active_mmu_pages must be a FIFO list, as kvm_zap_obsolete_pages()
@@ -2448,7 +2450,7 @@ static struct kvm_mmu_page *kvm_mmu_alloc_shadow_page(struct kvm *kvm,
 	 * comments in kvm_zap_obsolete_pages().
 	 */
 	sp->mmu_valid_gen = kvm->arch.mmu_valid_gen;
-	list_add(&sp->link, &kvm->arch.active_mmu_pages);
+	list_add(&sp->lru_link, &kvm->arch.active_mmu_pages);
 	kvm_account_mmu_page(kvm, sp);
 
 	/* install host mmu entries when PVM */
@@ -2789,6 +2791,12 @@ static bool __kvm_mmu_prepare_zap_page(struct kvm *kvm,
 
 	lockdep_assert_held_write(&kvm->mmu_lock);
 	trace_kvm_mmu_prepare_zap_page(sp);
+
+  if(!list_empty(&sp->invalid_link)) {
+    *nr_zapped = 0;
+    return 0;
+  }
+
 	++kvm->stat.mmu_shadow_zapped;
 	*nr_zapped = mmu_zap_unsync_children(kvm, sp, invalid_list);
 	*nr_zapped += kvm_mmu_page_unlink_children(kvm, sp, invalid_list);
@@ -2811,17 +2819,13 @@ static bool __kvm_mmu_prepare_zap_page(struct kvm *kvm,
 		 * the active page list.  See list_del() in the "else" case of
 		 * !sp->root_count.
 		 */
-		if (sp->role.invalid)
-			list_add(&sp->link, &invalid_list->heads[sp->role.level]);
-		else
-			list_move(&sp->link, &invalid_list->heads[sp->role.level]);
+		list_add(&sp->invalid_link, &invalid_list->heads[sp->role.level]);
 		kvm_unaccount_mmu_page(kvm, sp);
 	} else {
 		/*
 		 * Remove the active root from the active page list, the root
 		 * will be explicitly freed when the root_count hits zero.
 		 */
-		list_del(&sp->link);
 
 		/*
 		 * Obsolete pages cannot be used on any vCPUs, see the comment
@@ -2875,7 +2879,7 @@ static void kvm_mmu_commit_zap_page(struct kvm *kvm,
 	kvm_flush_remote_tlbs(kvm);
 
   for_each_level(level, 0, PT64_ROOT_MAX_LEVEL) {
-    list_for_each_entry_safe(sp, nsp, &invalid_list->heads[level], link) {
+    list_for_each_entry_safe(sp, nsp, &invalid_list->heads[level], invalid_link) {
       WARN_ON_ONCE(!sp->role.invalid || sp->root_count);
       kvm_mmu_free_shadow_page(sp);
     }
@@ -2896,7 +2900,7 @@ static unsigned long kvm_mmu_zap_oldest_mmu_pages(struct kvm *kvm,
 		return 0;
 
 restart:
-	list_for_each_entry_safe_reverse(sp, tmp, &kvm->arch.active_mmu_pages, link) {
+	list_for_each_entry_safe_reverse(sp, tmp, &kvm->arch.active_mmu_pages, lru_link) {
 		/*
 		 * Don't zap active root pages, the page itself can't be freed
 		 * and zapping it will just force vCPUs to realloc and reload.
@@ -6326,21 +6330,13 @@ static void kvm_zap_obsolete_pages(struct kvm *kvm)
 
 restart:
 	list_for_each_entry_safe_reverse(sp, node,
-	      &kvm->arch.active_mmu_pages, link) {
+	      &kvm->arch.active_mmu_pages, lru_link) {
 		/*
 		 * No obsolete valid page exists before a newly created page
 		 * since active_mmu_pages is a FIFO list.
 		 */
 		if (!is_obsolete_sp(kvm, sp))
 			break;
-
-		/*
-		 * Invalid pages should never land back on the list of active
-		 * pages.  Skip the bogus page, otherwise we'll get stuck in an
-		 * infinite loop if the page gets put back on the list (again).
-		 */
-		if (WARN_ON_ONCE(sp->role.invalid))
-			continue;
 
 		/*
 		 * No need to flush the TLB since we're only zapping shadow
@@ -6950,9 +6946,7 @@ static void kvm_mmu_zap_all(struct kvm *kvm)
 
 	write_lock(&kvm->mmu_lock);
 restart:
-	list_for_each_entry_safe(sp, node, &kvm->arch.active_mmu_pages, link) {
-		if (WARN_ON_ONCE(sp->role.invalid))
-			continue;
+	list_for_each_entry_safe(sp, node, &kvm->arch.active_mmu_pages, lru_link) {
 		if (__kvm_mmu_prepare_zap_page(kvm, sp, &invalid_list, &ign))
 			goto restart;
 		if (cond_resched_rwlock_write(&kvm->mmu_lock))
