@@ -1042,6 +1042,10 @@ struct kvm_lpage_info {
 	int disallow_lpage;
 };
 
+struct kvm_mmu_invalid_list {
+  struct list_head heads[PT64_ROOT_MAX_LEVEL + 1];
+};
+
 struct kvm_kpfn_element {
   kvm_pfn_t pfn;
   spinlock_t lock;
