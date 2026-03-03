@@ -2339,8 +2339,19 @@ static inline void kvm_account_pgtable_pages(void *virt, int nr)
 /* Max number of entries allowed for each kvm dirty ring */
 #define  KVM_DIRTY_RING_MAX_ENTRIES  65536
 
+extern void kvm_rmap_read_begin(struct kvm *kvm, gfn_t gfn);
+extern void kvm_vcpu_rmap_read_begin(struct kvm_vcpu *kvm, gfn_t gfn);
+extern void kvm_rmap_write_begin(struct kvm *kvm, gfn_t gfn);
+extern void kvm_vcpu_rmap_write_begin(struct kvm_vcpu *kvm, gfn_t gfn);
+
+extern void kvm_rmap_read_end(struct kvm *kvm, gfn_t gfn);
+extern void kvm_vcpu_rmap_read_end(struct kvm_vcpu *kvm, gfn_t gfn);
+extern void kvm_rmap_write_end(struct kvm *kvm, gfn_t gfn);
+extern void kvm_vcpu_rmap_write_end(struct kvm_vcpu *kvm, gfn_t gfn);
+
 extern bool kvm_kpfn_ready_memslot(const struct kvm_memory_slot *slot, gfn_t gfn);
 extern bool kvm_vcpu_kpfn_ready(struct kvm_vcpu *vcpu, gfn_t gfn);
 extern void runpv_mark_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order);
+
 int runpv_mmu_set_pte(struct kvm_vcpu *vcpu, gfn_t ptep, gfn_t pte, int level);
 #endif

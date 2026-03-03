@@ -310,7 +310,7 @@ static int FNAME(walk_addr_generic)(struct guest_walker *walker,
 	int ret;
 	pt_element_t pte;
 	pt_element_t __user *ptep_user;
-	gfn_t table_gfn;
+	gfn_t table_gfn = 0;
 	u64 pt_access, pte_access;
 	unsigned index, accessed_dirty, pte_pkey;
 	u64 nested_access;
@@ -403,8 +403,10 @@ retry_walk:
 		if (!kvm_is_visible_memslot(slot))
 			goto error;
 
+    kvm_vcpu_rmap_read_begin(vcpu, table_gfn);
 		host_addr = gfn_to_hva_memslot_prot(slot, gpa_to_gfn(real_gpa),
 					    &walker->pte_writable[walker->level - 1]);
+    kvm_vcpu_rmap_read_end(vcpu, table_gfn);
 		if (unlikely(kvm_is_error_hva(host_addr)))
 			goto error;
 
@@ -439,6 +441,7 @@ retry_walk:
 		walker->pt_access[walker->level - 1] = FNAME(gpte_access)(pt_access ^ walk_nx_mask);
 	} while (!FNAME(is_last_gpte)(mmu, walker->level, pte));
 
+  table_gfn = 0;
 	pte_pkey = FNAME(gpte_pkeys)(vcpu, pte);
 	accessed_dirty = have_ad ? pte_access & PT_GUEST_ACCESSED_MASK : 0;
 

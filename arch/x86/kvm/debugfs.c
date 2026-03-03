@@ -121,10 +121,12 @@ static int kvm_mmu_rmaps_stat_show(struct seq_file *m, void *v)
 				lpage_size = kvm_mmu_slot_lpages(slot, k + 1);
 				cur = log[k];
 				for (l = 0; l < lpage_size; l++) {
+          read_lock(&rmap[l].lock);
 					index = ffs(pte_list_count(&rmap[l]));
 					if (WARN_ON_ONCE(index >= RMAP_LOG_SIZE))
 						index = RMAP_LOG_SIZE - 1;
 					cur[index]++;
+          read_unlock(&rmap[l].lock);
 				}
 			}
 	}
