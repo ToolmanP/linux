@@ -712,6 +712,7 @@ struct kvm {
 #endif /* KVM_HAVE_MMU_RWLOCK */
 
 	struct mutex slots_lock;
+  spinlock_t mmu_stat_lock;
 
 	/*
 	 * Protects the arch-specific fields of struct kvm_memory_slots in
