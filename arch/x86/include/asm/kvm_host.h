@@ -413,6 +413,7 @@ enum kvm_rmap_type {
 struct kvm_rmap_head {
 	unsigned long val;
   enum kvm_rmap_type type;
+  rwlock_t lock;
 };
 
 struct kvm_pio_request {
@@ -1040,6 +1041,7 @@ struct kvm_vcpu_arch {
 
 struct kvm_lpage_info {
 	int disallow_lpage;
+  rwlock_t lock;
 };
 
 struct kvm_mmu_invalid_list {
