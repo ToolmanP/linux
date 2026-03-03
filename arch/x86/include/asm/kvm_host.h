@@ -1040,8 +1040,8 @@ struct kvm_vcpu_arch {
 };
 
 struct kvm_lpage_info {
-	int disallow_lpage;
   rwlock_t lock;
+	int disallow_lpage;
 };
 
 struct kvm_mmu_invalid_list {

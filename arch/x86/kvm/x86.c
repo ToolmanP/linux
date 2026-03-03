@@ -8734,7 +8734,9 @@ static bool reexecute_instruction(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa,
 		unsigned int indirect_shadow_pages;
 
 		write_lock(&vcpu->kvm->mmu_lock);
+    spin_lock(&vcpu->kvm->mmu_stat_lock);
 		indirect_shadow_pages = vcpu->kvm->arch.indirect_shadow_pages;
+    spin_unlock(&vcpu->kvm->mmu_stat_lock);
 		write_unlock(&vcpu->kvm->mmu_lock);
 
 		if (indirect_shadow_pages)
