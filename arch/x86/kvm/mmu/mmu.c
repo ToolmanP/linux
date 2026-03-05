@@ -6857,11 +6857,21 @@ int kvm_mmu_create(struct kvm_vcpu *vcpu)
 
 	vcpu->arch.mmu_pte_list_desc_cache.kmem_cache = pte_list_desc_cache;
 	vcpu->arch.mmu_pte_list_desc_cache.gfp_zero = __GFP_ZERO;
+	vcpu->arch.mmu_pte_list_desc_cache.gfp_custom = GFP_ATOMIC;
+  spin_lock_init(&vcpu->arch.mmu_pte_list_desc_cache.lock);
 
 	vcpu->arch.mmu_page_header_cache.kmem_cache = mmu_page_header_cache;
 	vcpu->arch.mmu_page_header_cache.gfp_zero = __GFP_ZERO;
+	vcpu->arch.mmu_page_header_cache.gfp_custom = GFP_ATOMIC;
+  spin_lock_init(&vcpu->arch.mmu_page_header_cache.lock);
 
 	vcpu->arch.mmu_shadow_page_cache.gfp_zero = __GFP_ZERO;
+	vcpu->arch.mmu_shadow_page_cache.gfp_custom = GFP_ATOMIC;
+  spin_lock_init(&vcpu->arch.mmu_shadow_page_cache.lock);
+
+  vcpu->arch.mmu_shadowed_info_cache.gfp_zero = __GFP_ZERO;
+  vcpu->arch.mmu_shadowed_info_cache.gfp_custom = GFP_ATOMIC;
+  spin_lock_init(&vcpu->arch.mmu_shadowed_info_cache.lock);
 
 	vcpu->arch.mmu = &vcpu->arch.root_mmu;
 	vcpu->arch.walk_mmu = &vcpu->arch.root_mmu;
@@ -7027,11 +7037,18 @@ void kvm_mmu_init_vm(struct kvm *kvm)
 
 	kvm->arch.split_page_header_cache.kmem_cache = mmu_page_header_cache;
 	kvm->arch.split_page_header_cache.gfp_zero = __GFP_ZERO;
+	kvm->arch.split_page_header_cache.gfp_custom = GFP_ATOMIC;
+
+  spin_lock_init(&kvm->arch.split_page_header_cache.lock);
 
 	kvm->arch.split_shadow_page_cache.gfp_zero = __GFP_ZERO;
+	kvm->arch.split_shadow_page_cache.gfp_custom = GFP_ATOMIC;
+  spin_lock_init(&kvm->arch.split_shadow_page_cache.lock);
 
 	kvm->arch.split_desc_cache.kmem_cache = pte_list_desc_cache;
 	kvm->arch.split_desc_cache.gfp_zero = __GFP_ZERO;
+	kvm->arch.split_desc_cache.gfp_custom = GFP_ATOMIC;
+  spin_lock_init(&kvm->arch.split_desc_cache.lock);
 }
 
 static void mmu_free_vm_memory_caches(struct kvm *kvm)
@@ -7214,7 +7231,10 @@ void kvm_mmu_slot_remove_write_access(struct kvm *kvm,
 
 static inline bool need_topup(struct kvm_mmu_memory_cache *cache, int min)
 {
-	return kvm_mmu_memory_cache_nr_free_objects(cache) < min;
+  spin_lock(&cache->lock);
+	bool ret = kvm_mmu_memory_cache_nr_free_objects(cache) < min;
+  spin_unlock(&cache->lock);
+  return ret;
 }
 
 static bool need_topup_split_caches_or_resched(struct kvm *kvm)
