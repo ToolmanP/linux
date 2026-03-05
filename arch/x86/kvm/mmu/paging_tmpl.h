@@ -652,12 +652,13 @@ static void FNAME(pte_prefetch)(struct kvm_vcpu *vcpu, struct guest_walker *gw,
 static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 			 struct guest_walker *gw)
 {
-	struct kvm_mmu_page *sp = NULL;
+	struct kvm_mmu_page *sp = NULL, *parent = NULL;
 	struct kvm_shadow_walk_iterator it;
 	unsigned int direct_access, access;
 	int top_level, ret, rcu_idx;
 	gfn_t base_gfn = fault->gfn;
 
+  ret = RET_PF_RETRY;
 	WARN_ON_ONCE(gw->gfn != base_gfn);
 	direct_access = gw->pte_access;
 
@@ -687,8 +688,13 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 		goto out_gpte_changed;
 	}
 
-	for_each_shadow_entry(vcpu, fault->addr, it) {
+  rcu_idx = srcu_read_lock(&vcpu->kvm->arch.mmu_srcu);
+
+	for_each_shadow_entry_locked(vcpu, fault->addr, it) {
 		gfn_t table_gfn;
+
+    if(it.obsolete)
+      goto out_sp_obsolete;
 
 		clear_sp_write_flooding_count(it.sptep);
 		if (it.level == gw->level)
@@ -696,46 +702,36 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 
 		table_gfn = gw->table_gfn[it.level - 2];
 		access = gw->pt_access[it.level - 2];
+    parent = sptep_to_sp(it.sptep);
 
-    rcu_idx = srcu_read_lock(&vcpu->kvm->arch.mmu_srcu);
+retry_indirect:
 		sp = kvm_mmu_get_child_sp(vcpu, it.sptep, table_gfn,
 					  false, access, &rcu_idx);
 
-		if (sp != ERR_PTR(-EEXIST)) {
-			/*
-			 * We must synchronize the pagetable before linking it
-			 * because the guest doesn't need to flush tlb when
-			 * the gpte is changed from non-present to present.
-			 * Otherwise, the guest may use the wrong mapping.
-			 *
-			 * For PG_LEVEL_4K, kvm_mmu_get_page() has already
-			 * synchronized it transiently via kvm_sync_page().
-			 *
-			 * For higher level pagetable, we synchronize it via
-			 * the slower mmu_sync_children().  If it needs to
-			 * break, some progress has been made; return
-			 * RET_PF_RETRY and retry on the next #PF.
-			 * KVM_REQ_MMU_SYNC is not necessary but it
-			 * expedites the process.
-			 */
-			if (sp->unsync_children &&
-			    mmu_sync_children(vcpu, sp, false))
-				return RET_PF_RETRY;
-		}
+    /* No more sync now */
+		if (FNAME(gpte_changed)(vcpu, gw, it.level - 1))
+			goto out_sp_obsolete;
+    
+		if (sp == ERR_PTR(-EEXIST)) 
+      continue;
 
-		/*
-		 * Verify that the gpte in the page we've just write
-		 * protected is still there.
-		 */
-		if (FNAME(gpte_changed)(vcpu, gw, it.level - 1)){
-      srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
-			goto out_gpte_changed;
+    if(sp_upgrade_lock(vcpu->kvm, parent)) {
+      sp_downgrade_lock(vcpu->kvm, parent);
+      goto out_sp_obsolete;
     }
 
-		if (sp != ERR_PTR(-EEXIST))
-			link_shadow_page(vcpu, it.sptep, sp);
+    if(sp_write_lock(vcpu->kvm, sp)) {
+      sp_write_unlock(vcpu->kvm, sp);
+      sp_downgrade_lock(vcpu->kvm, parent);
+      goto retry_indirect;
+    }
 
-    srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
+    link_shadow_page(vcpu, it.sptep, sp);
+    sp_write_unlock(vcpu->kvm, sp);
+
+    if(sp_downgrade_lock(vcpu->kvm, parent))
+      goto out_sp_obsolete;
+
 		if (fault->write && table_gfn == fault->gfn)
 			fault->write_fault_to_shadow_pgtable = true;
 	}
@@ -750,11 +746,15 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 
 	trace_kvm_mmu_spte_requested(fault);
 
-	for (; shadow_walk_okay(&it); shadow_walk_next(&it)) {
+	for (; shadow_walk_okay_locked(&it); shadow_walk_next(&it)) {
 		/*
 		 * We cannot overwrite existing page tables with an NX
 		 * large page, as the leaf could be executable.
 		 */
+    
+    if(it.obsolete)
+      goto out_sp_obsolete;
+
 		if (fault->nx_huge_page_workaround_enabled)
 			disallowed_hugepage_adjust(fault, *it.sptep, it.level);
 
@@ -763,35 +763,60 @@ static int FNAME(fetch)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 			break;
 
 		validate_direct_spte(vcpu, it.sptep, direct_access);
-    rcu_idx = srcu_read_lock(&vcpu->kvm->arch.mmu_srcu);
+
+    parent = sptep_to_sp(it.sptep);
+
+retry_direct:
 		sp = kvm_mmu_get_child_sp(vcpu, it.sptep, base_gfn,
 					  true, direct_access, &rcu_idx);
 
-		if (sp == ERR_PTR(-EEXIST)) {
-      srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
+		if (sp == ERR_PTR(-EEXIST))
 			continue;
+
+    if(sp_upgrade_lock(vcpu->kvm, parent)) {
+      sp_downgrade_lock(vcpu->kvm, parent);
+      goto out_sp_obsolete;
     }
 
-		link_shadow_page(vcpu, it.sptep, sp);
+    if(sp_write_lock(vcpu->kvm, sp)) {
+      sp_write_unlock(vcpu->kvm, sp);
+      sp_downgrade_lock(vcpu->kvm, parent);
+      goto retry_direct;
+    }
+
+    link_shadow_page(vcpu, it.sptep, sp);
+    sp_write_unlock(vcpu->kvm, sp);
+
 		if (fault->huge_page_disallowed)
 			account_nx_huge_page(vcpu->kvm, sp,
 					     fault->req_level >= it.level);
-    srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
+
+    if(sp_downgrade_lock(vcpu->kvm, parent))
+      goto out_sp_obsolete;
+
 	}
 
-	if (WARN_ON_ONCE(it.level != fault->goal_level))
+  parent = sptep_to_sp(it.sptep);
+
+	if (WARN_ON_ONCE(it.level != fault->goal_level)) {
+    shadow_walk_end(&it);
+    srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
 		return -EFAULT;
+  }
+
+  if(sp_upgrade_lock(vcpu->kvm, parent)) {
+    sp_downgrade_lock(vcpu->kvm, parent);
+    goto out_sp_obsolete;
+  }
 
 	ret = mmu_set_spte(vcpu, fault->slot, it.sptep, gw->pte_access,
 			   base_gfn, fault->pfn, fault);
-	if (ret == RET_PF_SPURIOUS)
-		return ret;
-
-	FNAME(pte_prefetch)(vcpu, gw, it.sptep);
-	return ret;
-
+  sp_downgrade_lock(vcpu->kvm, parent);
+out_sp_obsolete:
+  shadow_walk_end(&it);
 out_gpte_changed:
-	return RET_PF_RETRY;
+  srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
+  return ret;
 }
 
 /*
@@ -881,7 +906,6 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 		goto out_unlock;
 
 	r = FNAME(fetch)(vcpu, fault, &walker);
-
 out_unlock:
   read_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
 	write_unlock(&vcpu->kvm->mmu_lock);
