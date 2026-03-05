@@ -58,7 +58,7 @@
 #include "trace.h"
 
 #ifdef CONFIG_DEBUG_RUNPV_MMU
-#define runpv_debugln(fmt, ...) pr_info("%s(%d): "fmt"\n", __func__, __LINE__, __VA_ARGS__)
+#define runpv_debugln(fmt, ...) pr_info("%s(%d): "fmt"\n", __func__, __LINE__, ##__VA_ARGS__)
 #else
 #define runpv_debugln(fmt, ...)
 #endif
@@ -163,7 +163,10 @@ struct kvm_shadow_walk_iterator {
 	hpa_t shadow_addr;
 	u64 *sptep;
 	int level;
+  int start_level;
 	unsigned index;
+  bool obsolete;
+  struct kvm_mmu_page *pages[PT64_ROOT_MAX_LEVEL];
 };
 
 #define for_each_level(_level, _lo, _hi) \
@@ -178,6 +181,11 @@ struct kvm_shadow_walk_iterator {
 #define for_each_shadow_entry(_vcpu, _addr, _walker)            \
 	for (shadow_walk_init(&(_walker), _vcpu, _addr);	\
 	     shadow_walk_okay(&(_walker));			\
+	     shadow_walk_next(&(_walker)))
+
+#define for_each_shadow_entry_locked(_vcpu, _addr, _walker)            \
+	for (shadow_walk_init(&(_walker), _vcpu, _addr);	\
+	     shadow_walk_okay_locked(&(_walker));			\
 	     shadow_walk_next(&(_walker)))
 
 #define for_each_shadow_entry_lockless(_vcpu, _addr, _walker, spte)	\
@@ -242,6 +250,58 @@ BUILD_MMU_ROLE_ACCESSOR(ext,  cr4, pke);
 BUILD_MMU_ROLE_ACCESSOR(ext,  cr4, la57);
 BUILD_MMU_ROLE_ACCESSOR(base, efer, nx);
 BUILD_MMU_ROLE_ACCESSOR(ext,  efer, lma);
+
+static bool is_obsolete_sp(struct kvm *kvm, struct kvm_mmu_page *sp)
+{
+	if (sp->role.invalid)
+		return true;
+
+	/* TDP MMU pages do not use the MMU generation. */
+	return !is_tdp_mmu_page(sp) &&
+	       unlikely(sp->mmu_valid_gen != kvm->arch.mmu_valid_gen);
+}
+
+static inline bool sp_read_lock(struct kvm *kvm, struct kvm_mmu_page *sp)
+{
+  runpv_debugln("sp=0x%lx", (unsigned long)sp);
+  read_lock(&sp->lock);
+  return is_obsolete_sp(kvm, sp);
+}
+
+static inline void sp_read_unlock(struct kvm *kvm, struct kvm_mmu_page *sp)
+{
+  runpv_debugln("sp=0x%lx", (unsigned long)sp);
+  read_unlock(&sp->lock);
+}
+
+static inline bool sp_upgrade_lock(struct kvm *kvm, struct kvm_mmu_page *sp)
+{
+  runpv_debugln("sp=0x%lx", (unsigned long)sp);
+  read_unlock(&sp->lock);
+  write_lock(&sp->lock);
+  return is_obsolete_sp(kvm, sp);
+}
+
+static inline bool sp_write_lock(struct kvm *kvm, struct kvm_mmu_page *sp)
+{
+  runpv_debugln("sp=0x%lx", (unsigned long)sp);
+  write_lock(&sp->lock);
+  return is_obsolete_sp(kvm, sp);
+}
+
+static inline void sp_write_unlock(struct kvm *kvm, struct kvm_mmu_page *sp)
+{
+  runpv_debugln("sp=0x%lx", (unsigned long)sp);
+  write_unlock(&sp->lock);
+}
+
+static inline bool sp_downgrade_lock(struct kvm *kvm, struct kvm_mmu_page *sp)
+{
+  runpv_debugln("sp=0x%lx", (unsigned long)sp);
+  write_unlock(&sp->lock);
+  read_lock(&sp->lock);
+  return is_obsolete_sp(kvm, sp);
+}
 
 static inline bool is_cr0_pg(struct kvm_mmu *mmu)
 {
@@ -905,7 +965,9 @@ void untrack_possible_nx_huge_page(struct kvm *kvm, struct kvm_mmu_page *sp)
 		return;
 
 	--kvm->stat.nx_lpage_splits;
-	list_del_init(&sp->possible_nx_huge_page_link);
+  sp_write_lock(kvm, sp);
+	list_del_rcu(&sp->possible_nx_huge_page_link);
+  sp_write_unlock(kvm, sp);
 }
 
 static void unaccount_nx_huge_page(struct kvm *kvm, struct kvm_mmu_page *sp)
@@ -2060,11 +2122,15 @@ static void kvm_mmu_free_shadow_page(struct kvm *kvm, struct kvm_mmu_page *sp)
 
 	hlist_del_rcu(&sp->hash_link);
   list_del_rcu(&sp->lru_link);
+  sp_write_lock(kvm, sp);
 	list_del_init(&sp->invalid_link);
+  sp->role.zapped = 1;
+  sp_write_unlock(kvm, sp);
 
   spin_unlock(&kvm->arch.active_mmu_lock);
   spin_unlock(&kvm->arch.mmu_page_hash_locks[sp->role.level][hash]);
 
+  runpv_debugln("sp=0x%lx", (unsigned long)sp);
   call_srcu(&kvm->arch.mmu_srcu, &sp->rcu_head, __kvm_mmu_free_shadow_page);
 }
 
@@ -2251,14 +2317,20 @@ static bool sp_has_gptes(struct kvm_mmu_page *sp)
 	return true;
 }
 
+#define for_each_valid_sp_lockless(_kvm, _sp, _list)				\
+	hlist_for_each_entry(_sp, _list, hash_link)			\
+		if (is_obsolete_sp((_kvm), (_sp))) {} else
+
 #define for_each_valid_sp(_kvm, _sp, _list)				\
 	hlist_for_each_entry(_sp, _list, hash_link)			\
-		if (is_obsolete_sp((_kvm), (_sp))) {			\
+		if (sp_read_lock((_kvm), (_sp))) {			\
+      sp_read_unlock((_kvm), (_sp)); \
 		} else
 
 #define for_each_valid_sp_rcu(_kvm, _sp, _list) \
 	hlist_for_each_entry_rcu(_sp, _list, hash_link)			\
-		if (is_obsolete_sp((_kvm), (_sp))) {			\
+		if (sp_read_lock((_kvm), (_sp))) {			\
+      sp_read_unlock((_kvm), (_sp)); \
 		} else
 
 #define for_each_gfn_valid_sp_with_gptes_rcu(_kvm, _sp, _gfn, _level)		\
@@ -2268,6 +2340,21 @@ static bool sp_has_gptes(struct kvm_mmu_page *sp)
 
 #define for_each_gfn_valid_sp_with_gptes(_kvm, _sp, _gfn, _level)		\
 	for_each_valid_sp(_kvm, _sp,					\
+	  &(_kvm)->arch.mmu_page_hash[(_level)][kvm_page_table_hashfn(_gfn)])	\
+		if ((_sp)->gfn != (_gfn) || !sp_has_gptes(_sp)) { \
+      sp_read_unlock(_kvm, _sp); \
+    } else
+
+#define for_each_gfn_valid_sp_with_gptes_lockless(_kvm, _sp, _gfn, _level)		\
+	for_each_valid_sp_lockless(_kvm, _sp,					\
+	  &(_kvm)->arch.mmu_page_hash[(_level)][kvm_page_table_hashfn(_gfn)])	\
+		if ((_sp)->gfn != (_gfn) || !sp_has_gptes(_sp)) {} else
+
+#define for_each_valid_sp_stale(_kvm, _sp, _list)				\
+	hlist_for_each_entry(_sp, _list, hash_link)			
+
+#define for_each_gfn_valid_sp_with_gptes_stale(_kvm, _sp, _gfn, _level)		\
+	for_each_valid_sp_stale(_kvm, _sp,					\
 	  &(_kvm)->arch.mmu_page_hash[(_level)][kvm_page_table_hashfn(_gfn)])	\
 		if ((_sp)->gfn != (_gfn) || !sp_has_gptes(_sp)) {} else
 
@@ -2317,14 +2404,17 @@ static int __kvm_sync_page(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp)
 	int flush = 0;
 	int i;
 
-	if (!kvm_sync_page_check(vcpu, sp))
-		return -1;
+	if (!kvm_sync_page_check(vcpu, sp)) {
+    flush = -1;
+    goto out_unlock;
+  }
 
 	for (i = 0; i < SPTE_ENT_PER_PAGE; i++) {
 		int ret = kvm_sync_spte(vcpu, sp, i);
-
-		if (ret < -1)
-			return -1;
+		if (ret < -1) {
+      flush = -1;
+      goto out_unlock;
+    }
 		flush |= ret;
 	}
 
@@ -2337,6 +2427,7 @@ static int __kvm_sync_page(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp)
 	 * a relevant address, KVM is architecturally allowed to let vCPUs use
 	 * cached translations with the old protection bits.
 	 */
+out_unlock:
 	return flush;
 }
 
@@ -2364,15 +2455,6 @@ static bool kvm_mmu_remote_flush_or_zap(struct kvm *kvm,
 	return true;
 }
 
-static bool is_obsolete_sp(struct kvm *kvm, struct kvm_mmu_page *sp)
-{
-	if (sp->role.invalid)
-		return true;
-
-	/* TDP MMU pages do not use the MMU generation. */
-	return !is_tdp_mmu_page(sp) &&
-	       unlikely(sp->mmu_valid_gen != kvm->arch.mmu_valid_gen);
-}
 
 struct mmu_page_path {
 	struct kvm_mmu_page *parent[PT64_ROOT_MAX_LEVEL];
@@ -2523,14 +2605,14 @@ static struct kvm_mmu_page *kvm_mmu_find_shadow_page_fast(struct kvm *kvm,
 	for_each_valid_sp_rcu(kvm, sp, sp_list) {
 		if (sp->gfn != gfn) {
 			collisions++;
+      sp_read_unlock(kvm, sp);
 			continue;
 		}
 		/* unsync and write-flooding only apply to indirect SPs. */
-		if (sp->role.direct)
-			goto out;
+		if (!sp->role.direct)
+		  __clear_sp_write_flooding_count(sp);
 
-		__clear_sp_write_flooding_count(sp);
-
+    sp_read_unlock(kvm, sp);
 		goto out;
 	}
 
@@ -2540,6 +2622,7 @@ static struct kvm_mmu_page *kvm_mmu_find_shadow_page_fast(struct kvm *kvm,
 out:
 	if (collisions > kvm->stat.max_mmu_page_hash_collisions)
 		kvm->stat.max_mmu_page_hash_collisions = collisions;
+
 	return sp;
 }
 
@@ -2556,14 +2639,14 @@ static struct kvm_mmu_page *kvm_mmu_find_shadow_page_slow(struct kvm *kvm,
 	for_each_valid_sp(kvm, sp, sp_list) {
 		if (sp->gfn != gfn) {
 			collisions++;
+      sp_read_unlock(kvm, sp);
 			continue;
 		}
 		/* unsync and write-flooding only apply to indirect SPs. */
-		if (sp->role.direct)
-			goto out;
+		if (!sp->role.direct)
+		  __clear_sp_write_flooding_count(sp);
 
-		__clear_sp_write_flooding_count(sp);
-
+    sp_read_unlock(kvm, sp);
 		goto out;
 	}
 
@@ -2576,8 +2659,6 @@ out:
 		kvm->stat.max_mmu_page_hash_collisions = collisions;
 	return sp;
 }
-
-
 #else
 /*
  * The vCPU is required when finding indirect shadow pages; the shadow
@@ -2613,6 +2694,7 @@ static struct kvm_mmu_page *kvm_mmu_find_shadow_page(struct kvm *kvm,
 			 * Unsync pages must not be left as is, because the new
 			 * upper-level page will be write-protected.
 			 */
+      sp_read_unlock(kvm, sp);
 			if (role.level > PG_LEVEL_4K && sp->unsync)
 				kvm_mmu_prepare_zap_page(kvm, sp,
 							 &invalid_list);
@@ -2620,12 +2702,16 @@ static struct kvm_mmu_page *kvm_mmu_find_shadow_page(struct kvm *kvm,
 		}
 
 		/* unsync and write-flooding only apply to indirect SPs. */
-		if (sp->role.direct)
+		if (sp->role.direct){
+      sp_read_unlock(kvm, sp);
 			goto out;
+    }
 
 		if (sp->unsync) {
-			if (KVM_BUG_ON(!vcpu, kvm))
+			if (KVM_BUG_ON(!vcpu, kvm)) {
+        sp_read_unlock(kvm, sp);
 				break;
+      }
 
 			/*
 			 * The page is good, but is stale.  kvm_sync_page does
@@ -2639,9 +2725,11 @@ static struct kvm_mmu_page *kvm_mmu_find_shadow_page(struct kvm *kvm,
 			 * If the sync fails, the page is zapped.  If so, break
 			 * in order to rebuild it.
 			 */
+      sp_read_unlock(kvm, sp);
 			ret = kvm_sync_page(vcpu, sp, &invalid_list);
-			if (ret < 0)
+			if (ret < 0 || sp_read_lock(kvm, sp)) {
 				break;
+      }
 
 			WARN_ON_ONCE(!invalid_list_empty(&invalid_list));
 			if (ret > 0)
@@ -2650,6 +2738,7 @@ static struct kvm_mmu_page *kvm_mmu_find_shadow_page(struct kvm *kvm,
 
 		__clear_sp_write_flooding_count(sp);
 
+    sp_read_unlock(kvm, sp);
 		goto out;
 	}
 
@@ -2704,6 +2793,8 @@ static struct kvm_mmu_page *kvm_mmu_alloc_shadow_page(struct kvm *kvm,
 
 	sp->gfn = gfn;
 	sp->role = role;
+  sp->role.zapped = 0;
+  rwlock_init(&sp->lock);
 	if (sp_has_gptes(sp)) {
     spin_lock(&kvm->mmu_stat_lock);
 		account_shadowed(kvm, sp);
@@ -2837,6 +2928,7 @@ static void shadow_walk_init_using_root(struct kvm_shadow_walk_iterator *iterato
 	iterator->addr = addr;
 	iterator->shadow_addr = root;
 	iterator->level = vcpu->arch.mmu->root_role.level;
+  iterator->obsolete = false;
 
 	if (iterator->level >= PT64_ROOT_4LEVEL &&
 	    vcpu->arch.mmu->cpu_role.base.level < PT64_ROOT_4LEVEL &&
@@ -2857,6 +2949,8 @@ static void shadow_walk_init_using_root(struct kvm_shadow_walk_iterator *iterato
 		if (!iterator->shadow_addr)
 			iterator->level = 0;
 	}
+  iterator->start_level = iterator->level;
+  memset(iterator->pages, 0, sizeof(iterator->pages));
 }
 
 static void shadow_walk_init(struct kvm_shadow_walk_iterator *iterator,
@@ -2876,6 +2970,25 @@ static bool shadow_walk_okay(struct kvm_shadow_walk_iterator *iterator)
 	return true;
 }
 
+static bool shadow_walk_okay_locked(struct kvm_shadow_walk_iterator *iterator)
+{
+  struct kvm_mmu_page *sp;
+  u64 *old_sptep = iterator->sptep;
+
+  if(!shadow_walk_okay(iterator))
+    return false;
+
+  if(old_sptep == iterator->sptep)
+    return true;
+
+  sp = sptep_to_sp((u64 *)iterator->sptep);
+  runpv_debugln("read_lock sp=0x%lx", (unsigned long)sp);
+  read_lock(&sp->lock);
+  iterator->pages[iterator->level] = sp;
+  iterator->obsolete = sp->role.invalid;
+  return true;
+}
+
 static void __shadow_walk_next(struct kvm_shadow_walk_iterator *iterator,
 			       u64 spte)
 {
@@ -2891,6 +3004,15 @@ static void __shadow_walk_next(struct kvm_shadow_walk_iterator *iterator,
 static void shadow_walk_next(struct kvm_shadow_walk_iterator *iterator)
 {
 	__shadow_walk_next(iterator, *iterator->sptep);
+}
+
+static void shadow_walk_end(struct kvm_shadow_walk_iterator *iterator)
+{
+  for(int i = iterator->level; i <= iterator->start_level; i++)
+    if(iterator->pages[i]) {
+      runpv_debugln("read_unlock sp=0x%lx\n", (unsigned long)iterator->pages[i]);
+      read_unlock(&iterator->pages[i]->lock);
+    }
 }
 
 static void __link_shadow_page(struct kvm *kvm,
@@ -2948,10 +3070,13 @@ static void validate_direct_spte(struct kvm_vcpu *vcpu, u64 *sptep,
 		 * a new sp with the correct access.
 		 */
 		child = spte_to_child_sp(*sptep);
-		if (child->role.access == direct_access)
+    sp_write_lock(vcpu->kvm, child);
+		if (child->role.access == direct_access) {
+      sp_write_unlock(vcpu->kvm, child);
 			return;
-
+    }
 		drop_parent_pte(vcpu->kvm, child, sptep);
+    sp_write_unlock(vcpu->kvm, child);
 		kvm_flush_remote_tlbs_sptep(vcpu->kvm, sptep);
 	}
 }
@@ -3004,9 +3129,14 @@ static void kvm_mmu_unlink_parents(struct kvm *kvm, struct kvm_mmu_page *sp)
 {
 	u64 *sptep;
 	struct rmap_iterator iter;
+  struct kvm_mmu_page *parent;
 
-	while ((sptep = rmap_get_first(&sp->parent_ptes, &iter)))
+	while ((sptep = rmap_get_first(&sp->parent_ptes, &iter))) {
+    parent = sptep_to_sp(sptep);
+    sp_write_lock(kvm, parent);
 		drop_parent_pte(kvm, sp, sptep);
+    sp_write_unlock(kvm, parent);
+  }
 }
 
 #ifdef CONFIG_KVM_RUNPV
@@ -3052,15 +3182,17 @@ static bool __kvm_mmu_prepare_zap_page(struct kvm *kvm,
 	lockdep_assert_held_write(&kvm->mmu_lock);
 	trace_kvm_mmu_prepare_zap_page(sp);
 
-  if(!list_empty(&sp->invalid_link)) {
+  sp_write_lock(kvm, sp);
+
+  if(!list_empty(&sp->invalid_link) || !sp->role.zapped) {
     *nr_zapped = 0;
+    sp_write_unlock(kvm, sp);
     return 0;
   }
 
 	++kvm->stat.mmu_shadow_zapped;
 	*nr_zapped = mmu_zap_unsync_children(kvm, sp, invalid_list);
 	*nr_zapped += kvm_mmu_page_unlink_children(kvm, sp, invalid_list);
-	kvm_mmu_unlink_parents(kvm, sp);
 
 	/* Zapping children means active_mmu_pages has become unstable. */
 	list_unstable = *nr_zapped;
@@ -3104,8 +3236,10 @@ static bool __kvm_mmu_prepare_zap_page(struct kvm *kvm,
 	 * Make the request to free obsolete roots after marking the root
 	 * invalid, otherwise other vCPUs may not see it as invalid.
 	 */
+  sp_write_unlock(kvm, sp);
 	if (zapped_root)
 		kvm_make_all_cpus_request(kvm, KVM_REQ_MMU_FREE_OBSOLETE_ROOTS);
+
 	return list_unstable;
 }
 
@@ -3142,6 +3276,7 @@ static void kvm_mmu_commit_zap_page(struct kvm *kvm,
     list_for_each_entry_safe(sp, nsp, &invalid_list->heads[level], invalid_link) {
       WARN_ON_ONCE(!sp->role.invalid || sp->root_count);
       BUG_ON(!sp);
+	    kvm_mmu_unlink_parents(kvm, sp);
       kvm_mmu_free_shadow_page(kvm, sp);
     }
   }
@@ -3164,8 +3299,12 @@ restart:
 		 * Don't zap active root pages, the page itself can't be freed
 		 * and zapping it will just force vCPUs to realloc and reload.
 		 */
-		if (sp->root_count)
+    sp_read_lock(kvm, sp);
+		if (sp->root_count || sp->role.invalid) {
+      sp_read_unlock(kvm, sp);
 			continue;
+    }
+    sp_read_unlock(kvm, sp);
 
 		unstable = __kvm_mmu_prepare_zap_page(kvm, sp, &invalid_list,
 						      &nr_zapped);
@@ -3258,6 +3397,7 @@ int kvm_mmu_unprotect_page(struct kvm *kvm, gfn_t gfn)
   for_each_level(level, 0, PT64_ROOT_MAX_LEVEL)
     for_each_gfn_valid_sp_with_gptes(kvm, sp, gfn, level) {
       r = 1;
+      sp_read_unlock(kvm, sp);
       kvm_mmu_prepare_zap_page(kvm, sp, &invalid_list);
     }
   srcu_read_unlock(&kvm->arch.mmu_srcu, rcu_idx);
@@ -3312,7 +3452,7 @@ int mmu_try_to_unsync_pages(struct kvm *kvm, const struct kvm_memory_slot *slot,
 	 */
   rcu_idx = srcu_read_lock(&kvm->arch.mmu_srcu);
   for_each_level(level, 0, PT64_ROOT_MAX_LEVEL)
-	for_each_gfn_valid_sp_with_gptes(kvm, sp, gfn, level) {
+	for_each_gfn_valid_sp_with_gptes_stale(kvm, sp, gfn, level) {
 		if (!can_unsync){
       srcu_read_unlock(&kvm->arch.mmu_srcu, rcu_idx);
 			return -EPERM;
@@ -3443,7 +3583,7 @@ static int mmu_set_spte(struct kvm_vcpu *vcpu, struct kvm_memory_slot *slot,
 
   runpv_debugln("gfn=0x%llx->pfn=0x%llx", gfn, pfn);
 	wrprot = make_spte(vcpu, sp, slot, pte_access, gfn, pfn, *sptep, prefetch,
-			   true, host_writable, &spte);
+			   false, host_writable, &spte);
 
 	if (*sptep == spte) {
 		ret = RET_PF_SPURIOUS;
@@ -3467,6 +3607,7 @@ static int mmu_set_spte(struct kvm_vcpu *vcpu, struct kvm_memory_slot *slot,
 		/* Already rmapped but the pte_access bits may have changed. */
 		kvm_mmu_page_set_access(sp, spte_index(sptep), pte_access);
 	}
+  runpv_debugln("sptep=0x%llx, spte=0x%llx, ret=%d", (unsigned long)sptep, spte, ret);
 
 	return ret;
 }
@@ -4078,10 +4219,16 @@ static void mmu_free_root_page(struct kvm *kvm, hpa_t *root_hpa,
 	if (WARN_ON_ONCE(!sp))
 		return;
 
+	*root_hpa = INVALID_PAGE;
+  sp_write_lock(kvm, sp);
 	if (is_tdp_mmu_page(sp))
 		kvm_tdp_mmu_put_root(kvm, sp, false);
-	else if (!--sp->root_count && sp->role.invalid)
+	else if (!--sp->root_count && sp->role.invalid) {
+    sp_write_unlock(kvm, sp);
 		kvm_mmu_prepare_zap_page(kvm, sp, invalid_list);
+  } else {
+    sp_write_unlock(kvm, sp);
+  }
 
 	*root_hpa = INVALID_PAGE;
 }
@@ -4183,9 +4330,15 @@ static hpa_t mmu_alloc_root(struct kvm_vcpu *vcpu, gfn_t gfn, int quadrant,
 	WARN_ON_ONCE(quadrant && !role.has_4_byte_gpte);
 	WARN_ON_ONCE(role.direct && role.has_4_byte_gpte);
 
-	sp = kvm_mmu_get_shadow_page(vcpu, gfn, role, rcu_idx);
-	++sp->root_count;
-
+restart:
+  sp = kvm_mmu_get_shadow_page(vcpu, gfn, role, rcu_idx);
+  if(sp_write_lock(vcpu->kvm, sp)){
+    sp_write_unlock(vcpu->kvm, sp);
+    goto restart;
+  } else {
+    ++sp->root_count;
+    sp_write_unlock(vcpu->kvm, sp);
+  }
 	return __pa(sp->spt);
 }
 
@@ -4901,10 +5054,16 @@ static bool is_page_fault_stale(struct kvm_vcpu *vcpu,
 				struct kvm_page_fault *fault)
 {
 	struct kvm_mmu_page *sp = root_to_sp(vcpu->arch.mmu->root.hpa);
+  bool obsolete = false;
+
+	if (!sp && kvm_test_request(KVM_REQ_MMU_FREE_OBSOLETE_ROOTS, vcpu))
+		return true;
 
 	/* Special roots, e.g. pae_root, are not backed by shadow pages. */
-	if (sp && is_obsolete_sp(vcpu->kvm, sp))
-		return true;
+	if (sp) {
+    obsolete = sp_read_lock(vcpu->kvm, sp);
+    sp_read_unlock(vcpu->kvm, sp);
+  }
 
 	/*
 	 * Roots without an associated shadow page are considered invalid if
@@ -4914,11 +5073,8 @@ static bool is_page_fault_stale(struct kvm_vcpu *vcpu,
 	 * previous root, then __kvm_mmu_prepare_zap_page() signals all vCPUs
 	 * to reload even if no vCPU is actively using the root.
 	 */
-	if (!sp && kvm_test_request(KVM_REQ_MMU_FREE_OBSOLETE_ROOTS, vcpu))
-		return true;
-
-	return fault->slot &&
-	       mmu_invalidate_retry_hva(vcpu->kvm, fault->mmu_seq, fault->hva);
+	return obsolete || (fault->slot &&
+	       mmu_invalidate_retry_hva(vcpu->kvm, fault->mmu_seq, fault->hva));
 }
 
 static int direct_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
@@ -6251,15 +6407,20 @@ void kvm_mmu_track_write(struct kvm_vcpu *vcpu, gpa_t gpa, const u8 *new,
 	for_each_gfn_valid_sp_with_gptes(vcpu->kvm, sp, gfn, level) {
 		if (detect_write_misaligned(sp, gpa, bytes) ||
 		      detect_write_flooding(sp)) {
+      sp_read_unlock(vcpu->kvm, sp);
 			kvm_mmu_prepare_zap_page(vcpu->kvm, sp, &invalid_list);
 			++vcpu->kvm->stat.mmu_flooded;
 			continue;
 		}
 
 		spte = get_written_sptes(sp, gpa, &npte);
-		if (!spte)
-			continue;
 
+		if (!spte) {
+      sp_read_unlock(vcpu->kvm, sp);
+			continue;
+    }
+
+    sp_upgrade_lock(vcpu->kvm, sp);
 		while (npte--) {
 			entry = *spte;
 			mmu_page_zap_pte(vcpu->kvm, sp, spte, NULL);
@@ -6269,6 +6430,7 @@ void kvm_mmu_track_write(struct kvm_vcpu *vcpu, gpa_t gpa, const u8 *new,
 				flush = true;
 			++spte;
 		}
+    sp_write_unlock(vcpu->kvm, sp);
 	}
   srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
 	kvm_mmu_remote_flush_or_zap(vcpu->kvm, &invalid_list, flush);
@@ -6683,8 +6845,10 @@ restart:
 		 * No obsolete valid page exists before a newly created page
 		 * since active_mmu_pages is a FIFO list.
 		 */
-		if (!is_obsolete_sp(kvm, sp))
+		if (!sp_read_lock(kvm, sp)){
+      sp_read_unlock(kvm, sp);
 			break;
+    }
 
 		/*
 		 * No need to flush the TLB since we're only zapping shadow
@@ -6692,6 +6856,7 @@ restart:
 		 * loaded a new root, i.e. the shadow pages being zapped cannot
 		 * be in active use by the guest.
 		 */
+    sp_read_unlock(kvm, sp);
 		if (batch >= BATCH_ZAP_PAGES &&
 		    need_resched() && rwlock_needbreak(&kvm->mmu_lock)) {
 			batch = 0;

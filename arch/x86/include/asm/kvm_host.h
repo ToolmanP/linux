@@ -350,7 +350,8 @@ union kvm_mmu_page_role {
 		unsigned guest_mode:1;
 		unsigned passthrough:1;
 		unsigned host_mmu_la57_top_p4d:1;
-		unsigned :4;
+    unsigned zapped:1;
+		unsigned :3;
 
 		/*
 		 * This is left at the top of the word so that

@@ -57,6 +57,7 @@ struct kvm_mmu_page {
 	struct hlist_node hash_link;
   struct list_head invalid_link;
 
+  rwlock_t lock;
 	bool tdp_mmu_page;
 	bool unsync;
 	union {
