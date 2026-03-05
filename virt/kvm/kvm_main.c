@@ -413,32 +413,44 @@ int __kvm_mmu_topup_memory_cache(struct kvm_mmu_memory_cache *mc, int capacity, 
 {
 	gfp_t gfp = mc->gfp_custom ? mc->gfp_custom : GFP_KERNEL_ACCOUNT;
 	void *obj;
+  int ret = 0;
 
+  spin_lock(&mc->lock);
 	if (mc->nobjs >= min)
-		return 0;
+    goto out;
 
 	if (unlikely(!mc->objects)) {
-		if (WARN_ON_ONCE(!capacity))
-			return -EIO;
+		if (WARN_ON_ONCE(!capacity)) {
+			ret = -EIO;
+      goto out;
+    }
 
 		mc->objects = kvmalloc_array(sizeof(void *), capacity, gfp);
-		if (!mc->objects)
-			return -ENOMEM;
+		if (!mc->objects) {
+			ret = -ENOMEM;
+      goto out;
+    }
 
 		mc->capacity = capacity;
 	}
 
 	/* It is illegal to request a different capacity across topups. */
-	if (WARN_ON_ONCE(mc->capacity != capacity))
-		return -EIO;
+	if (WARN_ON_ONCE(mc->capacity != capacity)) {
+		ret = -EIO;
+    goto out;
+  }
 
 	while (mc->nobjs < mc->capacity) {
 		obj = mmu_memory_cache_alloc_obj(mc, gfp);
-		if (!obj)
-			return mc->nobjs >= min ? 0 : -ENOMEM;
+		if (!obj) {
+			ret = mc->nobjs >= min ? 0 : -ENOMEM;
+      goto out;
+    }
 		mc->objects[mc->nobjs++] = obj;
 	}
-	return 0;
+out:
+  spin_unlock(&mc->lock);
+	return ret;
 }
 
 int kvm_mmu_topup_memory_cache(struct kvm_mmu_memory_cache *mc, int min)
@@ -453,6 +465,7 @@ int kvm_mmu_memory_cache_nr_free_objects(struct kvm_mmu_memory_cache *mc)
 
 void kvm_mmu_free_memory_cache(struct kvm_mmu_memory_cache *mc)
 {
+  spin_lock(&mc->lock);
 	while (mc->nobjs) {
 		if (mc->kmem_cache)
 			kmem_cache_free(mc->kmem_cache, mc->objects[--mc->nobjs]);
@@ -464,16 +477,19 @@ void kvm_mmu_free_memory_cache(struct kvm_mmu_memory_cache *mc)
 
 	mc->objects = NULL;
 	mc->capacity = 0;
+  spin_unlock(&mc->lock);
 }
 
 void *kvm_mmu_memory_cache_alloc(struct kvm_mmu_memory_cache *mc)
 {
 	void *p;
 
+  spin_lock(&mc->lock);
 	if (WARN_ON(!mc->nobjs))
 		p = mmu_memory_cache_alloc_obj(mc, GFP_ATOMIC | __GFP_ACCOUNT);
 	else
 		p = mc->objects[--mc->nobjs];
+  spin_unlock(&mc->lock);
 	BUG_ON(!p);
 	return p;
 }

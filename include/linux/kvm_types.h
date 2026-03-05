@@ -97,6 +97,7 @@ struct kvm_mmu_memory_cache {
 	int capacity;
 	int nobjs;
 	void **objects;
+  spinlock_t lock;
 };
 #endif
 
