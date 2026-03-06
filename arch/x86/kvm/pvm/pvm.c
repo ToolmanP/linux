@@ -2365,7 +2365,7 @@ static int handle_hc_virtio_kick(struct kvm_vcpu *vcpu, unsigned long addr, unsi
   return 1;
 }
 
-extern int runpv_init_direct_mapping_shadow(
+extern int runpv_init_direct_mapping_shadow_host(
 	struct kvm_vcpu *vcpu,
 	unsigned long start_gfn,
 	unsigned long end_gfn
@@ -2464,7 +2464,7 @@ static int handle_hc_init_direct_mapping_shadow(struct kvm_vcpu *vcpu,
 						unsigned long end_gfn)
 {
 	int ret;
-	ret = runpv_init_direct_mapping_shadow(vcpu, start_gfn, end_gfn);
+	ret = runpv_init_direct_mapping_shadow_host(vcpu, start_gfn, end_gfn);
 	kvm_rax_write(vcpu, ret);
 	return 1;
 }

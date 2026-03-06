@@ -6327,7 +6327,7 @@ static void reset_guest_paging_metadata(struct kvm_vcpu *vcpu,
 	update_pkru_bitmask(mmu);
 }
 
-int runpv_init_direct_mapping_shadow(struct kvm_vcpu *vcpu,
+int runpv_init_direct_mapping_shadow_host(struct kvm_vcpu *vcpu,
 				     unsigned long start_gfn,
 				     unsigned long end_gfn)
 {
@@ -6363,7 +6363,7 @@ int runpv_init_direct_mapping_shadow(struct kvm_vcpu *vcpu,
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(runpv_init_direct_mapping_shadow);
+EXPORT_SYMBOL_GPL(runpv_init_direct_mapping_shadow_host);
 
 int runpv_faultin_direct_mapping_fast(struct kvm_vcpu *vcpu,
 				      gfn_t gfn)
