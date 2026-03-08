@@ -63,6 +63,14 @@
 #define runpv_debugln(fmt, ...)
 #endif
 
+unsigned long runpv_ro_dm_start;
+
+void runpv_set_ro_dm_start(unsigned long start)
+{
+	runpv_ro_dm_start = start;
+}
+EXPORT_SYMBOL_GPL(runpv_set_ro_dm_start);
+
 extern bool itlb_multihit_kvm_mitigation;
 
 static bool nx_hugepage_mitigation_hard_disabled;
@@ -2202,6 +2210,8 @@ static void kvm_unaccount_mmu_page(struct kvm *kvm, struct kvm_mmu_page *sp)
 static void __kvm_mmu_free_shadow_page(struct rcu_head *rcu_head)
 {
 	 struct kvm_mmu_page *sp = container_of(rcu_head, struct kvm_mmu_page, rcu_head);
+	 if (sp->kvm->gpt2spt_arr)
+		 sp->kvm->gpt2spt_arr[sp->gfn] = NULL;
 	free_page((unsigned long)sp->spt);
 	if (!sp->role.direct)
 		free_page((unsigned long)sp->shadowed_translation);
@@ -2930,8 +2940,10 @@ static struct kvm_mmu_page *kvm_mmu_alloc_shadow_page(struct kvm *kvm,
 
 	sp = kvm_mmu_memory_cache_alloc(caches->page_header_cache);
 	sp->spt = kvm_mmu_memory_cache_alloc(caches->shadow_page_cache);
+	kvm->gpt2spt_arr[gfn] = (void *)(runpv_ro_dm_start + __pa(sp->spt));
 	if (!role.direct)
 		sp->shadowed_translation = kvm_mmu_memory_cache_alloc(caches->shadowed_info_cache);
+	sp->kvm = kvm;
 
 	set_page_private(virt_to_page(sp->spt), (unsigned long)sp);
 

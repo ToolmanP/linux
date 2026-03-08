@@ -27,6 +27,8 @@ void runpv_pfn_event_enter(int event);
 void runpv_pfn_event_add(int event, struct page *page, unsigned int order);
 void runpv_pfn_event_exit(int event);
 
+pte_t runpv_ptep_get(pte_t *ptep);
+
 static inline long runpv_hypercall3(long nr, long a0, long a1, long a2)
 {
 	long ret;
@@ -124,6 +126,10 @@ static inline void runpv_pfn_event_add(int event, struct page *page, unsigned in
 
 static inline void runpv_pfn_event_exit(int event) {
 
+}
+
+static inline pte_t runpv_ptep_get(pte_t *ptep) {
+	return READ_ONCE(*ptep);
 }
 
 #endif

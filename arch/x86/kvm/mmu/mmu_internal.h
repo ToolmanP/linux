@@ -97,6 +97,8 @@ struct kvm_mmu_page {
 	 */
 	u64 *shadowed_translation;
 
+	struct kvm *kvm;
+
 	/* Currently serving as active root */
 	union {
 		int root_count;

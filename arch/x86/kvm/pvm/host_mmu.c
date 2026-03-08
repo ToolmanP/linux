@@ -27,6 +27,7 @@
 #define PVM_GUEST_MAPPING_START		(-1UL << 47)
 
 static struct vm_struct *pvm_va_range;
+static struct vm_struct *runpv_ro_dm_range;
 
 u32 pml4_index_start;
 u32 pml4_index_end;
@@ -86,7 +87,44 @@ static __init void clone_host_mmu(u64 *spt, u64 *host, int index_start, int inde
 			continue;
 
 		/* remove userbit from host mmu, which also disable VSYSCALL page */
-		spt[i] = host[i] & ~(_PAGE_USER | SPTE_MMU_PRESENT_MASK);
+		spt[i] = host[i] & ~(0 | SPTE_MMU_PRESENT_MASK);
+	}
+}
+
+static __init void clone_ro_direct_mapping(u64 *spt)
+{
+	unsigned long direct_map_start = page_offset_base;
+	unsigned long direct_map_end   = round_up((unsigned long)high_memory, PUD_SIZE);
+	unsigned long direct_map_size = direct_map_end - direct_map_start;
+	runpv_ro_dm_range = get_vm_area_align(direct_map_size, (1UL << 30), VM_ALLOC|VM_NO_GUARD);
+	BUG_ON(!runpv_ro_dm_range);
+
+	unsigned long va_start = (unsigned long)runpv_ro_dm_range->addr;
+	extern void runpv_set_ro_dm_start(unsigned long start);
+	runpv_set_ro_dm_start(va_start);
+
+	pgprotval_t prot = protval_4k_2_large(pgprot_val(PAGE_KERNEL_RO) | _PAGE_USER);
+	prot &= __default_kernel_pte_mask;
+
+	{
+		pgprotval_t direct_prot = protval_4k_2_large(pgprot_val(PAGE_KERNEL));
+		direct_prot &= __default_kernel_pte_mask;
+		BUG_ON((prot ^ direct_prot) != (_PAGE_USER | _PAGE_RW | _PAGE_DIRTY));
+	}
+
+	BUG_ON(!boot_cpu_has(X86_FEATURE_GBPAGES));
+
+	for (unsigned long pa_start = 0; pa_start < direct_map_size; pa_start += PUD_SIZE, va_start += PUD_SIZE) {
+		u64 *pgd = spt;
+		u64 *pud_table;
+		unsigned int pgd_idx = pgd_index(va_start);
+		unsigned int pud_idx = pud_index(va_start);
+
+		BUG_ON(pgtable_l5_enabled());
+		BUG_ON(!(pgd[pgd_idx] & _PAGE_PRESENT));
+		pud_table = (u64 *)__va(pgd[pgd_idx] & PTE_PFN_MASK);
+
+		pud_table[pud_idx] = (pa_start & PUD_MASK) | prot | _PAGE_PSE;
 	}
 }
 
@@ -128,6 +166,8 @@ int __init host_mmu_init(void)
 		clone_host_mmu(host_mmu_root_pgd, host_pgd, pml4_index_start, pml4_index_end);
 	}
 
+	clone_ro_direct_mapping(host_mmu_root_pgd);
+
 	return 0;
 }
 
@@ -135,6 +175,8 @@ void host_mmu_destroy(void)
 {
 	if (pvm_va_range)
 		free_vm_area(pvm_va_range);
+	if (runpv_ro_dm_range)
+		free_vm_area(runpv_ro_dm_range);
 	if (host_mmu_root_pgd)
 		free_page((unsigned long)(void *)host_mmu_root_pgd);
 	if (host_mmu_la57_top_p4d)

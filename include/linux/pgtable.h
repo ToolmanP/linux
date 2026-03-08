@@ -279,9 +279,10 @@ static inline int pudp_set_access_flags(struct vm_area_struct *vma,
 #endif
 
 #ifndef ptep_get
+#include <asm/runpv_para.h>
 static inline pte_t ptep_get(pte_t *ptep)
 {
-	return READ_ONCE(*ptep);
+	return runpv_ptep_get(ptep);
 }
 #endif
 

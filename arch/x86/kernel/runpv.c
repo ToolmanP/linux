@@ -103,6 +103,38 @@ __visible noinstr bool do_syscall_64_runpv(struct pt_regs *regs, int nr)
 	return true;
 }
 
+static __always_inline unsigned long runpv_gpt2spt_base(void)
+{
+	static unsigned long gpt2spt_base;
+	unsigned long val;
+
+	if (likely(READ_ONCE(gpt2spt_base)))
+		return gpt2spt_base;
+
+	val = pvm_hypercall1(PVM_HC_RDMSR, MSR_PVM_GPT2SPT_BASE);
+	WRITE_ONCE(gpt2spt_base, val);
+
+	return val;
+}
+
+pte_t runpv_ptep_get(pte_t *ptep)
+{
+	unsigned long gfn = (unsigned long)__pa(ptep) >> PAGE_SHIFT;
+	void **gpt2spt = (void **)runpv_gpt2spt_base();
+	void *spt = gpt2spt[gfn];
+	if (spt == NULL)
+		return READ_ONCE(*ptep);
+	if (ptep->pte & _PAGE_PRESENT) {
+		unsigned long idx = ((unsigned long)ptep & (PAGE_SIZE - 1)) / sizeof(*ptep);
+		unsigned long shadow_ad_bits = ((pte_t *)spt)[idx].pte & (_PAGE_ACCESSED | _PAGE_DIRTY);
+		unsigned long guest_other_bits = ptep->pte & ~(_PAGE_ACCESSED | _PAGE_DIRTY);
+		return native_make_pte(guest_other_bits | shadow_ad_bits);
+	} else {
+		return READ_ONCE(*ptep);
+	}
+}
+EXPORT_SYMBOL_GPL(runpv_ptep_get);
+
 #define HOST_PAGE_FAULTIN	(1UL << 0)
 
 #define runpv_set_PT_DEBUG 0

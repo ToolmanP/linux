@@ -1244,6 +1244,9 @@ static int pvm_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_PVM_LINEAR_ADDRESS_RANGE:
 		msr_info->data = pvm->msr_linear_address_range;
 		break;
+	case MSR_PVM_GPT2SPT_BASE:
+		msr_info->data = vcpu->kvm->gpt2spt_base;
+		break;
 	default:
 		ret = kvm_get_msr_common(vcpu, msr_info);
 	}
@@ -3479,11 +3482,47 @@ static int pvm_vm_init(struct kvm *kvm)
 	if (!kvm->page_array_base)
 		return -ENOMEM;
 	init_page_array(kvm->page_array_base);
+	
+	{
+		void **gpt2spt;
+		// RUNPV-TODO:
+		const int gfn_size = 0x800000;
+		const int array_size = gfn_size * sizeof(void *) / PAGE_SIZE;
+		struct page **pages;
+		int i;
+		void *addr;
+
+		pages = kvmalloc_array(array_size, sizeof(struct page *), GFP_KERNEL | __GFP_ZERO);
+		BUG_ON(!pages);
+
+		for (i = 0; i < array_size; i++) {
+			addr = (void *)__get_free_page(GFP_KERNEL);
+			BUG_ON(!addr);
+			pages[i] = virt_to_page(addr);
+		}
+
+		gpt2spt = vmap(pages, array_size, VM_MAP, __pgprot(pgprot_val(PAGE_KERNEL_RO) | _PAGE_USER));
+		BUG_ON(!gpt2spt);
+		kvm->gpt2spt_arr = vmap(pages, array_size, VM_MAP, PAGE_KERNEL);
+		BUG_ON(!kvm->gpt2spt_arr);
+		kvm->gpt2spt_pages = pages;
+		kvm->gpt2spt_npages = array_size;
+		kvm->gpt2spt_base = (unsigned long)gpt2spt;
+	}
 	return 0;
 }
 
 static void pvm_vm_destroy(struct kvm *kvm)
 {
+	unsigned int i;
+
+	if (kvm->gpt2spt_base)
+		vunmap((void *)kvm->gpt2spt_base);
+	if (kvm->gpt2spt_arr)
+		vunmap(kvm->gpt2spt_arr);
+	for (i = 0; i < kvm->gpt2spt_npages; i++)
+		__free_page(kvm->gpt2spt_pages[i]);
+	kvfree(kvm->gpt2spt_pages);
 	kvfree((void *)kvm->page_buffer_base);
 	kvfree((void *)kvm->page_array_base);
 }

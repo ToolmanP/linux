@@ -814,6 +814,10 @@ struct kvm {
 	unsigned long page_offset_base;
 	unsigned long page_buffer_base;
 	unsigned long page_array_base;
+	void **gpt2spt_arr;
+	struct page **gpt2spt_pages;
+	unsigned int gpt2spt_npages;
+	unsigned long gpt2spt_base;
 
 #ifdef CONFIG_HAVE_KVM_PM_NOTIFIER
 	struct notifier_block pm_notifier;
