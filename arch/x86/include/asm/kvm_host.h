@@ -1283,6 +1283,7 @@ struct kvm_arch {
 	unsigned int indirect_shadow_pages;
 	u8 mmu_valid_gen;
 
+  spinlock_t mmu_page_hash_locks[PT64_ROOT_MAX_LEVEL + 1][KVM_NUM_MMU_PAGES];
 	struct hlist_head mmu_page_hash[PT64_ROOT_MAX_LEVEL + 1][KVM_NUM_MMU_PAGES];
   spinlock_t active_mmu_lock;
   struct srcu_struct mmu_srcu;
