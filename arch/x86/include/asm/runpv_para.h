@@ -2,10 +2,11 @@
 #ifndef __ASM_X86_RUNPV_PARA_H
 #define __ASM_X86_RUNPV_PARA_H
 
-#include <linux/sched.h>
 #include <asm/pvm_para.h>
 
 #ifndef __ASSEMBLY__
+
+#include <linux/sched.h>
 
 #define RUNPV_PFN_EVENT_NONE	(0)
 #define RUNPV_PFN_EVENT_ALLOC	(1)
@@ -28,46 +29,10 @@ void runpv_pfn_event_add(int event, struct page *page, unsigned int order);
 void runpv_pfn_event_exit(int event);
 
 pte_t runpv_ptep_get(pte_t *ptep);
+pmd_t runpv_pmdp_get(pmd_t *pmdp);
 
-static inline long runpv_hypercall3(long nr, long a0, long a1, long a2)
-{
-	long ret;
-	register long r10_reg asm("r10") = a2;
-	asm volatile("call runpv_hypercall"
-		     : "=a"(ret), "+D"(nr), "+S"(a0), "+d"(a1), "+r"(r10_reg)
-		     :
-		     : "memory", "rcx", "r8", "r9", "r11", "r12", "r13", "r14", "rbx", "rbp", "r15");
-	if (ret == -ENOSYS) {
-		pr_info("NOSYS: nr %lx\n", nr);
-	}
-	return ret;
-}
-
-static inline long runpv_hypercall2(long nr, long a0, long a1)
-{
-	return runpv_hypercall3(nr, a0, a1, 0);
-}
-
-static inline long runpv_hypercall1(long nr, long a0)
-{
-	return runpv_hypercall2(nr, a0, 0);
-}
-
-static inline long runpv_hypercall0(long nr)
-{
-	return runpv_hypercall1(nr, 0);
-}
-
-static inline long runpv_hypercall3_retry(long nr, long a0, long a1, long a2)
-{
-	for (;;) {
-		long ret = runpv_hypercall3(nr, a0, a1, a2);
-		if (ret == -EAGAIN) {
-			continue;
-		}
-		return ret;
-	}
-}
+#define ptep_get runpv_ptep_get
+#define pmdp_get runpv_pmdp_get
 
 void __init runpv_early_setup(unsigned long pgd);
 void __init runpv_init_direct_mapping_shadow(unsigned long start_pfn, unsigned long end_pfn);
@@ -126,10 +91,6 @@ static inline void runpv_pfn_event_add(int event, struct page *page, unsigned in
 
 static inline void runpv_pfn_event_exit(int event) {
 
-}
-
-static inline pte_t runpv_ptep_get(pte_t *ptep) {
-	return READ_ONCE(*ptep);
 }
 
 #endif

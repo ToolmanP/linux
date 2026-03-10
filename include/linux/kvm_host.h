@@ -2360,7 +2360,7 @@ extern void kvm_vcpu_rmap_write_end(struct kvm_vcpu *kvm, gfn_t gfn);
 extern bool kvm_kpfn_ready_memslot(const struct kvm_memory_slot *slot, gfn_t gfn);
 extern bool kvm_vcpu_kpfn_ready(struct kvm_vcpu *vcpu, gfn_t gfn);
 extern void runpv_mark_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order);
-extern int runpv_mmu_set_pte(struct kvm_vcpu *vcpu, gfn_t ptep_pa, gfn_t pte, int level);
+extern long runpv_mmu_op(struct kvm_vcpu *vcpu, long nr, long a0, long a1, long a2, long a3);
 extern int runpv_mmu_alloc_pte(struct kvm_vcpu *vcpu, gfn_t gfn, int level);
 extern int runpv_mmu_release_pte(struct kvm_vcpu *vcpu, gfn_t gfn, int level);
 #endif

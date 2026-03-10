@@ -103,6 +103,87 @@ __visible noinstr bool do_syscall_64_runpv(struct pt_regs *regs, int nr)
 	return true;
 }
 
+static inline long runpv_hypercall4(long nr, long a0, long a1, long a2, long a3)
+{
+	long ret;
+	register long r10_reg asm("r10") = a2;
+	register long r12_reg asm("r12") = a3;
+	asm volatile("call runpv_hypercall"
+		     : "=a"(ret), "+D"(nr), "+S"(a0), "+d"(a1), "+r"(r10_reg), "+r"(r12_reg)
+		     :
+		     : "memory", "rcx", "r8", "r9","r11", "r13", "r14", "rbx", "rbp", "r15");
+	if (ret == -ENOSYS) {
+		pr_info("NOSYS: nr %lx\n", nr);
+	}
+	return ret;
+}
+
+static inline long runpv_hypercall3(long nr, long a0, long a1, long a2)
+{
+	return runpv_hypercall4(nr, a0, a1, a2, 0);
+}
+
+static inline long runpv_hypercall2(long nr, long a0, long a1)
+{
+	return runpv_hypercall3(nr, a0, a1, 0);
+}
+
+static inline long runpv_hypercall1(long nr, long a0)
+{
+	return runpv_hypercall2(nr, a0, 0);
+}
+
+static inline long runpv_hypercall0(long nr)
+{
+	return runpv_hypercall1(nr, 0);
+}
+
+static inline long runpv_hypercall4_retry(long nr, long a0, long a1, long a2, long a3)
+{
+	for (;;) {
+		long ret = runpv_hypercall4(nr, a0, a1, a2, a3);
+		if (ret == -EAGAIN) {
+			continue;
+		}
+		return ret;
+	}
+}
+
+static inline long runpv_hypercall3_retry(long nr, long a0, long a1, long a2)
+{
+	return runpv_hypercall4_retry(nr, a0, a1, a2, 0);
+}
+
+static inline long runpv_hypercall2_retry(long nr, long a0, long a1)
+{
+	return runpv_hypercall4_retry(nr, a0, a1, 0, 0);
+}
+
+static inline long runpv_hypercall1_retry(long nr, long a0)
+{
+	return runpv_hypercall4_retry(nr, a0, 0, 0, 0);
+}
+
+static inline long runpv_helper_pte_set(unsigned long ptep, unsigned long pte)
+{
+	return runpv_hypercall2_retry(RUNPV_HC_MMU_PTE_SET, (long)ptep, (long)pte);
+}
+
+static inline long runpv_helper_pmd_set(unsigned long pmdp, unsigned long pmd)
+{
+	return runpv_hypercall2_retry(RUNPV_HC_MMU_PMD_SET, (long)pmdp, (long)pmd);
+}
+
+static inline long runpv_helper_pud_set(unsigned long pudp, unsigned long pud)
+{
+	return runpv_hypercall2_retry(RUNPV_HC_MMU_PUD_SET, (long)pudp, (long)pud);
+}
+
+static inline long runpv_helper_p4d_set(unsigned long p4dp, unsigned long p4d)
+{
+	return runpv_hypercall2_retry(RUNPV_HC_MMU_P4D_SET, (long)p4dp, (long)p4d);
+}
+
 static __always_inline unsigned long runpv_gpt2spt_base(void)
 {
 	static unsigned long gpt2spt_base;
@@ -119,21 +200,17 @@ static __always_inline unsigned long runpv_gpt2spt_base(void)
 
 pte_t runpv_ptep_get(pte_t *ptep)
 {
-	unsigned long gfn = (unsigned long)__pa(ptep) >> PAGE_SHIFT;
-	void **gpt2spt = (void **)runpv_gpt2spt_base();
-	void *spt = gpt2spt[gfn];
-	if (spt == NULL)
-		return READ_ONCE(*ptep);
-	if (ptep->pte & _PAGE_PRESENT) {
-		unsigned long idx = ((unsigned long)ptep & (PAGE_SIZE - 1)) / sizeof(*ptep);
-		unsigned long shadow_ad_bits = ((pte_t *)spt)[idx].pte & (_PAGE_ACCESSED | _PAGE_DIRTY);
-		unsigned long guest_other_bits = ptep->pte & ~(_PAGE_ACCESSED | _PAGE_DIRTY);
-		return native_make_pte(guest_other_bits | shadow_ad_bits);
-	} else {
-		return READ_ONCE(*ptep);
-	}
+	return native_make_pte(runpv_hypercall1_retry(RUNPV_HC_MMU_PTEP_GET, (long)ptep));
 }
 EXPORT_SYMBOL_GPL(runpv_ptep_get);
+
+pmd_t runpv_pmdp_get(pmd_t *pmdp)
+{
+	BUG_ON(pmdp->pmd & _PAGE_PSE);
+	return READ_ONCE(*pmdp);
+	return native_make_pmd(runpv_hypercall1_retry(RUNPV_HC_MMU_PMDP_GET, (long)pmdp));
+}
+EXPORT_SYMBOL_GPL(runpv_pmdp_get);
 
 #define HOST_PAGE_FAULTIN	(1UL << 0)
 
@@ -222,26 +299,38 @@ EXPORT_SYMBOL_GPL(runpv_pfn_event_exit);
 
 static void runpv_set_pte(pte_t *ptep, pte_t pteval)
 {
-	if (runpv_hypercall3_retry(RUNPV_HC_SET_PTE, (long)__pa(ptep), (long)native_pte_val(pteval), PVM_SET_PTE_PTE)) 
+	// pr_info("%s parent %#lx pfn %#lx\n", __func__, __pa(ptep), (native_pte_val(pteval) & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT);
+	if (runpv_helper_pte_set(__pa(ptep), native_pte_val(pteval))) {
+		// pr_info("set pte %#lx to ptep %#lx failed\n", native_pte_val(pteval), ptep);
 		native_set_pte(ptep, pteval);
+	}
 }
 
 static void runpv_set_pmd(pmd_t *pmdp, pmd_t pmdval)
 {
-	if (runpv_hypercall3_retry(RUNPV_HC_SET_PTE, (long)__pa(pmdp), (long)native_pmd_val(pmdval), PVM_SET_PTE_PMD)) 
+	// pr_info("%s parent %#lx pfn %#lx\n", __func__, __pa(pmdp), (native_pmd_val(pmdval) & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT);
+	if (runpv_helper_pmd_set(__pa(pmdp), native_pmd_val(pmdval))) {
+		// pr_info("set pmd %#lx to pmdp %#lx failed\n", native_pmd_val(pmdval), pmdp);
 		native_set_pmd(pmdp, pmdval);
+	}
 }
 
 static void runpv_set_pud(pud_t *pudp, pud_t pudval)
 {
-	if (runpv_hypercall3_retry(RUNPV_HC_SET_PTE, (long)__pa(pudp), (long)native_pud_val(pudval), PVM_SET_PTE_PUD)) 
+	// pr_info("%s parent %#lx pfn %#lx\n", __func__, __pa(pudp), (native_pud_val(pudval) & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT);
+	if (runpv_helper_pud_set(__pa(pudp), native_pud_val(pudval))) {
+		// pr_info("set pud %#lx to pudp %#lx failed\n", native_pud_val(pudval), pudp);
 		native_set_pud(pudp, pudval);
+	}
 }
 
 static void runpv_set_p4d(p4d_t *p4dp, p4d_t p4dval)
 {
-	if (runpv_hypercall3_retry(RUNPV_HC_SET_PTE, (long)__pa(p4dp), (long)native_p4d_val(p4dval), PVM_SET_PTE_P4D)) 
+	// pr_info("%s parent %#lx pfn %#lx\n", __func__, __pa(p4dp), (native_p4d_val(p4dval) & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT);
+	if (runpv_helper_p4d_set(__pa(p4dp), native_p4d_val(p4dval))) {
+		// pr_info("set p4d %#lx to p4dp %#lx failed\n", native_p4d_val(p4dval), p4dp);
 		native_set_p4d(p4dp, p4dval);
+	}
 }
 
 static void runpv_alloc_pte(struct mm_struct *mm, unsigned long pfn)

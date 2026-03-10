@@ -134,7 +134,7 @@ struct tss_extra {
 	unsigned long page_offset_base;
 	unsigned long mmu_lock_ptr;
 	unsigned long vcpu_ptr;
-	unsigned long set_pte_ptr;
+	unsigned long runpv_mmu_op_func;
 	unsigned long host_cr3_switched;
 } ____cacheline_aligned;
 

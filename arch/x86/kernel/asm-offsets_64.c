@@ -82,7 +82,7 @@ int main(void)
 	ENTRY(page_offset_base);
 	ENTRY(mmu_lock_ptr);
 	ENTRY(vcpu_ptr);
-	ENTRY(set_pte_ptr);
+	ENTRY(runpv_mmu_op_func);
 	ENTRY(host_cr3_switched);
 	BLANK();
 #undef ENTRY

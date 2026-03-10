@@ -75,24 +75,26 @@ long runpv_hc_handle_tlb_flush_current(void)
 	return 0;
 }
 
-long runpv_hc_handle_set_pte(
-	unsigned long ptep_pa,
-	unsigned long pte,
-	unsigned long level
-) {
+long runpv_hc_handle_mmu_op(long nr, long a0, long a1, long a2, long a3)
+{
 	struct kvm_vcpu *vcpu = (struct kvm_vcpu *)this_cpu_read(cpu_tss_rw.tss_ex.vcpu_ptr);
-	long (*set_pte_ptr)(struct kvm_vcpu *vcpu, unsigned long ptep_pa, unsigned long pte, unsigned long level)
-		= (long (*)(struct kvm_vcpu *vcpu, unsigned long ptep_pa, unsigned long pte, unsigned long level))this_cpu_read(cpu_tss_rw.tss_ex.set_pte_ptr);
-	long ret = set_pte_ptr(vcpu, ptep_pa, pte, level);
+	long (*runpv_mmu_op_func)(struct kvm_vcpu *, long, long, long, long, long)
+		= (long (*)(struct kvm_vcpu *, long, long, long, long, long))this_cpu_read(cpu_tss_rw.tss_ex.runpv_mmu_op_func);
+	long ret = runpv_mmu_op_func(vcpu, nr, a0, a1, a2, a3);
 	return ret;
 }
 
-__visible noinstr long do_fast_hypercall(long nr, long a0, long a1, long a2) {
-  long ret = 0;
+__visible noinstr long do_fast_hypercall(long nr, long a0, long a1, long a2, long a3) {
+	long ret = 0;
+
 	switch (nr) {
-	case RUNPV_HC_SET_PTE:
-		ret = runpv_hc_handle_set_pte(a0, a1, a2);
-    break;
+	case RUNPV_HC_MMU_PTE_SET:
+	case RUNPV_HC_MMU_PMD_SET:
+	case RUNPV_HC_MMU_PUD_SET:
+	case RUNPV_HC_MMU_P4D_SET:
+	case RUNPV_HC_MMU_PTEP_GET:
+	case RUNPV_HC_MMU_PMDP_GET:
+		return runpv_hc_handle_mmu_op(nr, a0, a1, a2, a3);
 	case RUNPV_HC_TLB_FLUSH:
 		ret = runpv_hc_handle_tlb_flush();
     break;

@@ -74,12 +74,7 @@ static inline void native_set_pte(pte_t *ptep, pte_t pte)
 static inline void native_pte_clear(struct mm_struct *mm, unsigned long addr,
 				    pte_t *ptep)
 {
-#ifdef CONFIG_RUNPV_GUEST
-	if (runpv_hypercall3_retry(RUNPV_HC_SET_PTE, (long)__pa(ptep), 0, PVM_SET_PTE_PTE))
-		native_set_pte(ptep, native_make_pte(0));
-#else
 	native_set_pte(ptep, native_make_pte(0));
-#endif
 }
 
 static inline void native_set_pte_atomic(pte_t *ptep, pte_t pte)

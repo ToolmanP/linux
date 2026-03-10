@@ -2448,7 +2448,6 @@ static unsigned int handle_hc_free_to_buddy(struct kvm_vcpu *vcpu, unsigned long
 	// pr_info("%s: free %u pages to buddy\n", __func__, count);
 	return 1;
 }
-
 static int handle_hc_alloc_pte(struct kvm_vcpu *vcpu, unsigned long gfn, unsigned long level) {
 	// pr_info("alloc pte gfn %#lx level %d\n", gfn, level);
 	int ret = runpv_mmu_alloc_pte(vcpu, gfn, level);
@@ -3270,7 +3269,7 @@ static fastpath_t pvm_vcpu_run(struct kvm_vcpu *vcpu)
 	this_cpu_write(cpu_tss_rw.tss_ex.page_offset_base, vcpu->kvm->page_offset_base);
 	this_cpu_write(cpu_tss_rw.tss_ex.mmu_lock_ptr, (unsigned long)&vcpu->kvm->mmu_lock);
 	this_cpu_write(cpu_tss_rw.tss_ex.vcpu_ptr, (unsigned long)vcpu);
-	this_cpu_write(cpu_tss_rw.tss_ex.set_pte_ptr, (unsigned long)runpv_mmu_set_pte);
+	this_cpu_write(cpu_tss_rw.tss_ex.runpv_mmu_op_func, (unsigned long)runpv_mmu_op);
 
 	trace_kvm_entry(vcpu);
 

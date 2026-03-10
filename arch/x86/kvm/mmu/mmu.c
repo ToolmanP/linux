@@ -4208,148 +4208,257 @@ void *runpv_gpa_to_va(struct kvm_vcpu *vcpu, unsigned long gpa)
 	return __va((pfn << PAGE_SHIFT) ^ (gpa & ~PAGE_MASK));
 }
 
-int runpv_mmu_set_pte(
+static unsigned long gva_to_gpa(struct kvm_vcpu *vcpu, unsigned long gva)
+{
+	return gva - vcpu->kvm->page_offset_base;
+}
+
+/*
+ * gpt2spt stores guest-visible aliases in the read-only direct map clone.
+ * Hypervisor code can't safely dereference those aliases directly, so convert
+ * them back to the host direct map before touching the page.
+ */
+static void *runpv_ro_alias_to_va(void *ro_alias)
+{
+	if (!ro_alias)
+		return NULL;
+
+	return __va((unsigned long)ro_alias - runpv_ro_dm_start);
+}
+
+/*
+ * Look up and write-lock the parent shadow page for ptep_pa, then return the
+ * shadow PTE slot within it that corresponds to ptep_pa.
+ * Returns -ENODATA if no shadow page exists for the given role.
+ * Caller must hold kvm->mmu_invalidate_seq_lock for read and mmu_srcu.
+ */
+static long runpv_mmu_get_sptep(
 	struct kvm_vcpu *vcpu,
-	gpa_t ptep_pa,
-	gfn_t pte,
-	int level
+	union kvm_mmu_page_role role,
+	unsigned long ptep_pa,
+	struct kvm_mmu_page **parent_sp_out,
+	u64 **sptep_out
 ) {
+	gfn_t parent_gfn = (gpa_t)ptep_pa >> PAGE_SHIFT;
+	struct kvm_mmu_page *parent_sp;
+	int ret;
 
-  struct kvm_mmu_page *parent, *child;
-  struct kvm_memory_slot *slot;
-	int access, ret, op, rcu_idx;
-	union kvm_mmu_page_role role; 
-  gfn_t parent_gfn, child_gfn;
-	kvm_pfn_t pfn;
-  hpa_t *ptep_va;
-  u64 *sptep;
-  bool should_set = false;
+retry:
+	parent_sp = kvm_mmu_find_shadow_page_atomic(vcpu, parent_gfn, role);
+	if (!parent_sp)
+		return -ENODATA;
 
-  op = level & PVM_SET_PTE_OP_MASK;
-	level &= ~PVM_SET_PTE_OP_MASK;
-  role = vcpu->arch.mmu->root_role;
-	role.level = level;
-	role.quadrant = 0;
-
-	gpa_t parent_gpa = ptep_pa;
-	parent_gfn = parent_gpa >> PAGE_SHIFT;
-
-  ptep_va = runpv_gpa_to_va(vcpu, ptep_pa);
-
-	if (ptep_va == NULL) {
-		ret = -EFAULT;
-		goto va_not_found;
+	ret = sp_try_write_lock(vcpu->kvm, parent_sp);
+	if (ret == -EBUSY)
+		return -EAGAIN;
+	if (ret) {
+		sp_write_unlock(vcpu->kvm, parent_sp);
+		goto retry;
 	}
 
-	if (!(pte & _PAGE_PRESENT) && level == PVM_SET_PTE_PTE) {
-    ret = -EFAULT;
-		goto va_not_found;
-  }
+	*parent_sp_out = parent_sp;
+	*sptep_out = parent_sp->spt + spte_index((u64 *)ptep_pa);
+	return 0;
+}
 
-  if(!read_trylock(&vcpu->kvm->mmu_invalidate_seq_lock)) {
-    ret = -EBUSY;
-    goto va_not_found;
-  }
+/*
+ * Derive the effective access bits for a shadow PTE by narrowing the parent
+ * shadow page's access with the permission bits from the new guest PTE value.
+ */
+static unsigned long runpv_mmu_get_access(
+	struct kvm_mmu_page *parent_sp,
+	unsigned long pte
+) {
+	unsigned long access = parent_sp->role.access;
 
-  rcu_idx = srcu_read_lock(&vcpu->kvm->arch.mmu_srcu);
-
-retry_parent:
-	parent = kvm_mmu_find_shadow_page_atomic(vcpu, parent_gfn, role);
-
-	if (!parent) {
-		ret = -ENODATA;
-    goto out_unlock;
-	}
-
-  ret = sp_try_write_lock(vcpu->kvm, parent);
-
-  if(ret < 0)
-    goto out_unlock;
-  else if (ret){
-    sp_write_unlock(vcpu->kvm, parent);
-    goto retry_parent;
-  }
-
-	access = parent->role.access;
-	if (pte & _PAGE_NX) 
+	if (pte & _PAGE_NX)
 		access &= ~ACC_EXEC_MASK;
-	if (!(pte & _PAGE_USER)) 
+	if (!(pte & _PAGE_USER))
 		access &= ~ACC_USER_MASK;
-	if (!(pte & _PAGE_RW)) 
+	if (!(pte & _PAGE_RW))
 		access &= ~ACC_WRITE_MASK;
 
-	sptep = parent->spt + spte_index((u64 *)ptep_pa);
-	child_gfn = (pte & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT;
+	return access;
+}
+
+/*
+ * Install the shadow PTE that corresponds to a guest PTE.  For leaf PTEs
+ * (PVM_SET_PTE_PTE) the host pfn is resolved and mmu_set_spte_atomic() is
+ * called; for non-leaf entries a child shadow page is fetched/linked.
+ * Caller must hold the parent shadow page's write lock.
+ */
+static long runpv_mmu_write_spte(
+	struct kvm_vcpu *vcpu,
+	u64 *sptep,
+	unsigned long access,
+	unsigned long pte,
+	unsigned long level
+) {
+	unsigned long child_gfn = (pte & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT;
+	struct kvm_mmu_page *child_sp;
+	long ret;
 
 	if (level == PVM_SET_PTE_PTE) {
-
-    if(!(slot = kvm_vcpu_gfn_to_memslot(vcpu, child_gfn))){
-      ret = -ENODATA;
-      goto out_parent_locked;
-    }
-
-		pfn = kvm_vcpu_gfn_to_pfn_atomic(vcpu, child_gfn);
-		if (is_error_pfn(pfn)) {
-			ret = -EFAULT;
-			goto out_parent_locked;
-		}
-
+		struct kvm_memory_slot *slot = kvm_vcpu_gfn_to_memslot(vcpu, child_gfn);
+		if (!slot)
+			return -ENODATA;
+		kvm_pfn_t pfn = gfn_to_pfn_memslot_atomic(slot, child_gfn);
+		if (is_error_noslot_pfn(pfn))
+			return -EFAULT;
 		ret = mmu_set_spte_atomic(vcpu, slot, sptep, access, child_gfn, pfn, NULL);
-
-		if (ret != RET_PF_FIXED && ret != RET_PF_SPURIOUS) 
+		if (ret != RET_PF_FIXED && ret != RET_PF_SPURIOUS)
 			BUG();
-
 		kvm_release_pfn_clean(pfn);
-
-	} else {
-
-retry_child:
-		child = pte & _PAGE_PSE ? NULL 
-      : kvm_mmu_get_child_sp_atomic(vcpu, sptep, child_gfn, false, access);
-
-    if(!child){
-			ret = -EINVAL;
-			goto out_parent_locked;
-		}
-
-		if (child == ERR_PTR(-EEXIST)) {
-			ret = -EEXIST;
-			goto out_parent_locked;
-		}
-
-    ret = sp_try_write_lock(vcpu->kvm, child);
-
-    if(ret < 0) 
-      goto out_parent_locked;
-    else if(ret) {
-      sp_write_unlock(vcpu->kvm, child);
-      goto retry_child;
-    }
-
-		link_shadow_page_atomic(vcpu, sptep, child);
-    sp_write_unlock(vcpu->kvm, child);
+		return 0;
 	}
 
-  should_set = true;
-out_parent_locked:
-  sp_write_unlock(vcpu->kvm, parent);
+	if (pte & _PAGE_PSE)
+		return -EINVAL;
+
+retry_child:
+	child_sp = kvm_mmu_get_child_sp_atomic(vcpu, sptep, child_gfn, false, access);
+	if (!child_sp)
+		return -EINVAL;
+	if (child_sp == ERR_PTR(-EEXIST))
+		return 0;
+
+	ret = sp_try_write_lock(vcpu->kvm, child_sp);
+	if (ret == -EBUSY)
+		return -EAGAIN;
+	if (ret) {
+		sp_write_unlock(vcpu->kvm, child_sp);
+		goto retry_child;
+	}
+
+	link_shadow_page_atomic(vcpu, sptep, child_sp);
+	sp_write_unlock(vcpu->kvm, child_sp);
+	return 0;
+}
+
+/*
+ * Write the new guest PTE into guest memory.  The guest is expected to hold
+ * its page table lock, so a plain WRITE_ONCE is sufficient for all ops.
+ */
+static long runpv_mmu_write_guest_pte(
+	unsigned long *ptep_va,
+	unsigned long new_pte,
+	unsigned long *old_guest_pte_out
+) {
+	if (!ptep_va)
+		return -EFAULT;
+	if (old_guest_pte_out)
+		*old_guest_pte_out = READ_ONCE(*ptep_va);
+	WRITE_ONCE(*ptep_va, new_pte);
+	return 0;
+}
+
+long runpv_mmu_entry_set(
+	struct kvm_vcpu *vcpu,
+	unsigned long level,
+	unsigned long ptep_pa,
+	unsigned long new_pte
+) {
+	long ret;
+	int rcu_idx;
+	unsigned long *ptep_va;
+	union kvm_mmu_page_role role = vcpu->arch.mmu->root_role;
+	struct kvm_mmu_page *parent_sp;
+	u64 *sptep;
+
+	role.level    = level;
+	role.quadrant = 0;
+
+	ptep_va = runpv_gpa_to_va(vcpu, ptep_pa);
+	if (!ptep_va)
+		return -EFAULT;
+
+	/* Non-present leaf PTEs only need the guest PTE updated. */
+	if (!(new_pte & _PAGE_PRESENT) && level == PVM_SET_PTE_PTE)
+		return runpv_mmu_write_guest_pte(ptep_va, new_pte, NULL);
+
+	if (!read_trylock(&vcpu->kvm->mmu_invalidate_seq_lock))
+		return -EAGAIN;
+
+	rcu_idx = srcu_read_lock(&vcpu->kvm->arch.mmu_srcu);
+
+	ret = runpv_mmu_get_sptep(vcpu, role, ptep_pa, &parent_sp, &sptep);
+	if (ret)
+		goto out_unlock;
+
+	ret = runpv_mmu_write_spte(vcpu, sptep,
+				       runpv_mmu_get_access(parent_sp, new_pte),
+				       new_pte, level);
+	sp_write_unlock(vcpu->kvm, parent_sp);
+	if (ret)
+		goto out_unlock;
+
+	ret = runpv_mmu_write_guest_pte(ptep_va, new_pte, NULL);
 out_unlock:
-  srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
-  read_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
-  if(should_set) {
-    if (op == PVM_SET_PTE_OP_WRITE)  {
-      WRITE_ONCE(*(unsigned long *)(ptep_va), pte);
-      ret = 0;
-    }
-    else if (op == PVM_SET_PTE_OP_XCHG) 
-      ret = -1;
-    else 
-      BUG();
-  }
-va_not_found:
+	srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
+	read_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
 	return ret;
 }
-EXPORT_SYMBOL_GPL(runpv_mmu_set_pte);
+
+unsigned long runpv_mmu_entry_get(
+	struct kvm_vcpu *vcpu,
+	unsigned long level,
+	unsigned long ptep_va
+) {
+	unsigned long gpa = gva_to_gpa(vcpu, ptep_va);
+	unsigned long *ptep = runpv_gpa_to_va(vcpu, gpa);
+	unsigned long gfn, idx, spte, gpte, guest_other_bits, shadow_ad_bits;
+	void **gpt2spt;
+	void *spt;
+
+
+	if (level != PVM_SET_PTE_PTE)
+		BUG();
+
+	if (!ptep)
+		return 0;
+
+	gfn = gpa >> PAGE_SHIFT;
+	gpt2spt = (void **)vcpu->kvm->gpt2spt_arr;
+	spt = runpv_ro_alias_to_va(READ_ONCE(gpt2spt[gfn]));
+
+	if (spt == NULL)
+		return READ_ONCE(*ptep);
+
+	idx = (ptep_va & (PAGE_SIZE - 1)) / sizeof(*ptep);
+	do {
+		gpte = READ_ONCE(*ptep);
+		smp_rmb();
+		if (!(gpte & _PAGE_PRESENT))
+			return gpte;
+		spte = READ_ONCE(((unsigned long *)spt)[idx]);
+		smp_rmb();
+	} while (unlikely(gpte != READ_ONCE(*ptep)));
+
+	guest_other_bits = gpte & ~(_PAGE_ACCESSED | _PAGE_DIRTY);
+	shadow_ad_bits = spte & (_PAGE_ACCESSED | _PAGE_DIRTY);
+	return guest_other_bits | shadow_ad_bits;
+}
+
+long runpv_mmu_op(struct kvm_vcpu *vcpu, long nr, long a0, long a1, long a2, long a3)
+{
+	switch (nr) {
+	case RUNPV_HC_MMU_PTE_SET:
+		return runpv_mmu_entry_set(vcpu, PVM_SET_PTE_PTE, a0, a1);
+	case RUNPV_HC_MMU_PMD_SET:
+		return runpv_mmu_entry_set(vcpu, PVM_SET_PTE_PMD, a0, a1);
+	case RUNPV_HC_MMU_PUD_SET:
+		return runpv_mmu_entry_set(vcpu, PVM_SET_PTE_PUD, a0, a1);
+	case RUNPV_HC_MMU_P4D_SET:
+		return runpv_mmu_entry_set(vcpu, PVM_SET_PTE_P4D, a0, a1);
+	case RUNPV_HC_MMU_PTEP_GET:
+		return runpv_mmu_entry_get(vcpu, PVM_SET_PTE_PTE, a0);
+	case RUNPV_HC_MMU_PMDP_GET:
+		return runpv_mmu_entry_get(vcpu, PVM_SET_PTE_PMD, a0);
+	default:
+		BUG();
+	}
+}
+EXPORT_SYMBOL_GPL(runpv_mmu_op);
 
 int runpv_mmu_alloc_pte(
 	struct kvm_vcpu *vcpu,

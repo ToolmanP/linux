@@ -417,7 +417,7 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 .L_sysret_fast_hypercall:
 	swapgs
 
-	movq	%rsp, %r12
+	movq	%rsp, %r15
 	movq	%rcx, %r13
 	movq	%r11, %r14
 
@@ -430,6 +430,7 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 	movq	%r11, TSS_extra(fast_hypercall_current_cr3)
 
 	movq	%r10, %rcx
+	movq	%r12, %r8
 	call	do_fast_hypercall
 
 	# movq	TSS_extra(enter_cr3), %r9
@@ -437,7 +438,7 @@ SYM_INNER_LABEL(entry_SYSRETQ_switcher_unsafe_stack, SYM_L_GLOBAL)
 
 	movq	%r14, %r11
 	movq	%r13, %rcx
-	movq	%r12, %rsp
+	movq	%r15, %rsp
 	xorq	%r9, %r9
 
 	swapgs
