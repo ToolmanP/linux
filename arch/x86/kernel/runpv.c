@@ -212,6 +212,202 @@ pmd_t runpv_pmdp_get(pmd_t *pmdp)
 }
 EXPORT_SYMBOL_GPL(runpv_pmdp_get);
 
+pte_t runpv_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
+			       pte_t *ptep)
+{
+	return native_make_pte(runpv_hypercall2_retry(RUNPV_HC_MMU_PTEP_GET_AND_CLEAR, (long)__pa(ptep), 0));
+	pte_t pte = native_ptep_get_and_clear(ptep);
+	return pte;
+}
+EXPORT_SYMBOL_GPL(runpv_ptep_get_and_clear);
+
+pte_t runpv_ptep_get_and_clear_full(struct mm_struct *mm, unsigned long addr,
+				    pte_t *ptep, int full)
+{
+	pte_t pte;
+
+	if (full) {
+		pte = native_make_pte(runpv_hypercall2_retry(RUNPV_HC_MMU_PTEP_GET_AND_CLEAR, (long)__pa(ptep), 1));
+		// pte = native_local_ptep_get_and_clear(ptep);
+		// page_table_check_pte_clear(mm, pte);
+	} else {
+		pte = runpv_ptep_get_and_clear(mm, addr, ptep);
+	}
+
+	return pte;
+}
+EXPORT_SYMBOL_GPL(runpv_ptep_get_and_clear_full);
+
+void runpv_ptep_set_wrprotect(struct mm_struct *mm, unsigned long addr,
+			      pte_t *ptep)
+{
+	runpv_hypercall1_retry(RUNPV_HC_MMU_PTEP_SET_WRPROTECT, (long)__pa(ptep));
+	return;
+	pte_t old_pte, new_pte;
+
+	old_pte = READ_ONCE(*ptep);
+	do {
+		new_pte = pte_wrprotect(old_pte);
+	} while (!try_cmpxchg((long *)&ptep->pte, (long *)&old_pte,
+			      *(long *)&new_pte));
+}
+EXPORT_SYMBOL_GPL(runpv_ptep_set_wrprotect);
+
+int runpv_ptep_set_access_flags(struct vm_area_struct *vma,
+				unsigned long address, pte_t *ptep,
+				pte_t entry, int dirty)
+{
+	return (int)runpv_hypercall3_retry(RUNPV_HC_MMU_PTEP_SET_ACCESS_FLAGS, (long)__pa(ptep), (long)entry.pte, dirty);
+	int changed = !pte_same(*ptep, entry);
+
+	if (changed && dirty)
+		set_pte(ptep, entry);
+
+	return changed;
+}
+EXPORT_SYMBOL_GPL(runpv_ptep_set_access_flags);
+
+int runpv_ptep_test_and_clear_young(struct vm_area_struct *vma,
+				    unsigned long addr, pte_t *ptep)
+{
+	BUG();
+	return (int)runpv_hypercall1_retry(RUNPV_HC_MMU_PTEP_TEST_AND_CLEAR_YOUNG, (long)__pa(ptep));
+	int rc = 0;
+
+	if (pte_young(*ptep))
+		rc = test_and_clear_bit(_PAGE_BIT_ACCESSED,
+					(unsigned long *)&ptep->pte);
+
+	return rc;
+}
+EXPORT_SYMBOL_GPL(runpv_ptep_test_and_clear_young);
+
+pmd_t runpv_pmdp_huge_get_and_clear(struct mm_struct *mm, unsigned long addr,
+				    pmd_t *pmdp)
+{
+	BUG();
+	pmd_t pmd = native_pmdp_get_and_clear(pmdp);
+
+	page_table_check_pmd_clear(mm, pmd);
+	return pmd;
+}
+EXPORT_SYMBOL_GPL(runpv_pmdp_huge_get_and_clear);
+
+pud_t runpv_pudp_huge_get_and_clear(struct mm_struct *mm, unsigned long addr,
+				    pud_t *pudp)
+{
+	BUG();
+	pud_t pud = native_pudp_get_and_clear(pudp);
+
+	page_table_check_pud_clear(mm, pud);
+	return pud;
+}
+EXPORT_SYMBOL_GPL(runpv_pudp_huge_get_and_clear);
+
+void runpv_pmdp_set_wrprotect(struct mm_struct *mm, unsigned long addr,
+			      pmd_t *pmdp)
+{
+	pmd_t old_pmd, new_pmd;
+	BUG();
+
+	old_pmd = READ_ONCE(*pmdp);
+	do {
+		new_pmd = pmd_wrprotect(old_pmd);
+	} while (!try_cmpxchg((long *)pmdp, (long *)&old_pmd,
+			      *(long *)&new_pmd));
+}
+EXPORT_SYMBOL_GPL(runpv_pmdp_set_wrprotect);
+
+pmd_t runpv_pmdp_establish(struct vm_area_struct *vma, unsigned long address,
+			   pmd_t *pmdp, pmd_t pmd)
+{
+	BUG();
+	page_table_check_pmd_set(vma->vm_mm, pmdp, pmd);
+	if (IS_ENABLED(CONFIG_SMP))
+		return xchg(pmdp, pmd);
+
+	pmd_t old = *pmdp;
+
+	WRITE_ONCE(*pmdp, pmd);
+	return old;
+}
+EXPORT_SYMBOL_GPL(runpv_pmdp_establish);
+
+#if defined(CONFIG_TRANSPARENT_HUGEPAGE)
+int runpv_pmdp_set_access_flags(struct vm_area_struct *vma,
+				unsigned long address, pmd_t *pmdp,
+				pmd_t entry, int dirty)
+{
+	BUG();
+	int changed = !pmd_same(*pmdp, entry);
+
+	VM_BUG_ON(address & ~HPAGE_PMD_MASK);
+
+	if (changed && dirty)
+		set_pmd(pmdp, entry);
+
+	return changed;
+}
+EXPORT_SYMBOL_GPL(runpv_pmdp_set_access_flags);
+
+int runpv_pudp_set_access_flags(struct vm_area_struct *vma,
+				unsigned long address, pud_t *pudp,
+				pud_t entry, int dirty)
+{
+	BUG();
+	int changed = !pud_same(*pudp, entry);
+
+	VM_BUG_ON(address & ~HPAGE_PUD_MASK);
+
+	if (changed && dirty)
+		set_pud(pudp, entry);
+
+	return changed;
+}
+EXPORT_SYMBOL_GPL(runpv_pudp_set_access_flags);
+#endif
+
+#if defined(CONFIG_TRANSPARENT_HUGEPAGE) || \
+	defined(CONFIG_ARCH_HAS_NONLEAF_PMD_YOUNG)
+int runpv_pmdp_test_and_clear_young(struct vm_area_struct *vma,
+				    unsigned long addr, pmd_t *pmdp)
+{
+	BUG();
+	int rc = 0;
+
+	if (pmd_young(*pmdp))
+		rc = test_and_clear_bit(_PAGE_BIT_ACCESSED,
+					(unsigned long *)pmdp);
+
+	return rc;
+}
+EXPORT_SYMBOL_GPL(runpv_pmdp_test_and_clear_young);
+#endif
+
+#if defined(CONFIG_TRANSPARENT_HUGEPAGE)
+int runpv_pudp_test_and_clear_young(struct vm_area_struct *vma,
+				    unsigned long addr, pud_t *pudp)
+{
+	BUG();
+	int rc = 0;
+
+	if (pud_young(*pudp))
+		rc = test_and_clear_bit(_PAGE_BIT_ACCESSED,
+					(unsigned long *)pudp);
+
+	return rc;
+}
+EXPORT_SYMBOL_GPL(runpv_pudp_test_and_clear_young);
+
+pmd_t runpv_pmdp_invalidate_ad(struct vm_area_struct *vma,
+			       unsigned long address, pmd_t *pmdp)
+{
+	BUG();
+	return runpv_pmdp_establish(vma, address, pmdp, pmd_mkinvalid(*pmdp));
+}
+EXPORT_SYMBOL_GPL(runpv_pmdp_invalidate_ad);
+#endif
+
 #define HOST_PAGE_FAULTIN	(1UL << 0)
 
 #define runpv_set_PT_DEBUG 0

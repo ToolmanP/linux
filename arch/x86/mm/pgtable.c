@@ -7,6 +7,16 @@
 #include <asm/fixmap.h>
 #include <asm/mtrr.h>
 
+#ifdef CONFIG_RUNPV_GUEST
+#undef ptep_set_access_flags
+#undef pmdp_set_access_flags
+#undef pudp_set_access_flags
+#undef ptep_test_and_clear_young
+#undef pmdp_test_and_clear_young
+#undef pudp_test_and_clear_young
+#undef pmdp_invalidate_ad
+#endif
+
 #ifdef CONFIG_DYNAMIC_PHYSICAL_MASK
 phys_addr_t physical_mask __ro_after_init = (1ULL << __PHYSICAL_MASK_SHIFT) - 1;
 EXPORT_SYMBOL(physical_mask);

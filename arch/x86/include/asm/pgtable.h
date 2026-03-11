@@ -1278,6 +1278,7 @@ extern int ptep_clear_flush_young(struct vm_area_struct *vma,
 				  unsigned long address, pte_t *ptep);
 
 #define __HAVE_ARCH_PTEP_GET_AND_CLEAR
+#ifndef ptep_get_and_clear
 static inline pte_t ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
 				       pte_t *ptep)
 {
@@ -1285,8 +1286,10 @@ static inline pte_t ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
 	page_table_check_pte_clear(mm, pte);
 	return pte;
 }
+#endif
 
 #define __HAVE_ARCH_PTEP_GET_AND_CLEAR_FULL
+#ifndef ptep_get_and_clear_full
 static inline pte_t ptep_get_and_clear_full(struct mm_struct *mm,
 					    unsigned long addr, pte_t *ptep,
 					    int full)
@@ -1304,8 +1307,10 @@ static inline pte_t ptep_get_and_clear_full(struct mm_struct *mm,
 	}
 	return pte;
 }
+#endif
 
 #define __HAVE_ARCH_PTEP_SET_WRPROTECT
+#ifndef ptep_set_wrprotect
 static inline void ptep_set_wrprotect(struct mm_struct *mm,
 				      unsigned long addr, pte_t *ptep)
 {
@@ -1321,6 +1326,7 @@ static inline void ptep_set_wrprotect(struct mm_struct *mm,
 		new_pte = pte_wrprotect(old_pte);
 	} while (!try_cmpxchg((long *)&ptep->pte, (long *)&old_pte, *(long *)&new_pte));
 }
+#endif
 
 #define flush_tlb_fix_spurious_fault(vma, address, ptep) do { } while (0)
 
@@ -1346,6 +1352,7 @@ extern int pmdp_clear_flush_young(struct vm_area_struct *vma,
 
 
 #define __HAVE_ARCH_PMDP_HUGE_GET_AND_CLEAR
+#ifndef pmdp_huge_get_and_clear
 static inline pmd_t pmdp_huge_get_and_clear(struct mm_struct *mm, unsigned long addr,
 				       pmd_t *pmdp)
 {
@@ -1355,8 +1362,10 @@ static inline pmd_t pmdp_huge_get_and_clear(struct mm_struct *mm, unsigned long 
 
 	return pmd;
 }
+#endif
 
 #define __HAVE_ARCH_PUDP_HUGE_GET_AND_CLEAR
+#ifndef pudp_huge_get_and_clear
 static inline pud_t pudp_huge_get_and_clear(struct mm_struct *mm,
 					unsigned long addr, pud_t *pudp)
 {
@@ -1366,8 +1375,10 @@ static inline pud_t pudp_huge_get_and_clear(struct mm_struct *mm,
 
 	return pud;
 }
+#endif
 
 #define __HAVE_ARCH_PMDP_SET_WRPROTECT
+#ifndef pmdp_set_wrprotect
 static inline void pmdp_set_wrprotect(struct mm_struct *mm,
 				      unsigned long addr, pmd_t *pmdp)
 {
@@ -1383,6 +1394,7 @@ static inline void pmdp_set_wrprotect(struct mm_struct *mm,
 		new_pmd = pmd_wrprotect(old_pmd);
 	} while (!try_cmpxchg((long *)pmdp, (long *)&old_pmd, *(long *)&new_pmd));
 }
+#endif
 
 #ifndef pmdp_establish
 #define pmdp_establish pmdp_establish
