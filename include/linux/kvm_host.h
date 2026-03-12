@@ -1414,6 +1414,7 @@ int __kvm_mmu_topup_memory_cache(struct kvm_mmu_memory_cache *mc, int capacity, 
 int kvm_mmu_memory_cache_nr_free_objects(struct kvm_mmu_memory_cache *mc);
 void kvm_mmu_free_memory_cache(struct kvm_mmu_memory_cache *mc);
 void *kvm_mmu_memory_cache_alloc(struct kvm_mmu_memory_cache *mc);
+void kvm_mmu_memory_cache_free(struct kvm_mmu_memory_cache *mc, void *p);
 #endif
 
 void kvm_mmu_invalidate_begin(struct kvm *kvm, unsigned long start,
@@ -2355,6 +2356,7 @@ extern void kvm_vcpu_rmap_write_end(struct kvm_vcpu *kvm, gfn_t gfn);
 extern bool kvm_kpfn_ready_memslot(const struct kvm_memory_slot *slot, gfn_t gfn);
 extern bool kvm_vcpu_kpfn_ready(struct kvm_vcpu *vcpu, gfn_t gfn);
 extern void runpv_mark_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order);
-
-int runpv_mmu_set_pte(struct kvm_vcpu *vcpu, gfn_t ptep, gfn_t pte, int level);
+extern int runpv_mmu_set_pte(struct kvm_vcpu *vcpu, gfn_t ptep_pa, gfn_t pte, int level);
+extern int runpv_mmu_alloc_pte(struct kvm_vcpu *vcpu, gfn_t gfn, int level);
+extern int runpv_mmu_release_pte(struct kvm_vcpu *vcpu, gfn_t gfn, int level);
 #endif

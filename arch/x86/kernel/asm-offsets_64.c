@@ -81,6 +81,8 @@ int main(void)
 	ENTRY(page_array_base);
 	ENTRY(page_offset_base);
 	ENTRY(mmu_lock_ptr);
+	ENTRY(vcpu_ptr);
+	ENTRY(set_pte_ptr);
 	BLANK();
 #undef ENTRY
 

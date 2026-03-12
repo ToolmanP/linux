@@ -485,13 +485,22 @@ void *kvm_mmu_memory_cache_alloc(struct kvm_mmu_memory_cache *mc)
 	void *p;
 
   spin_lock(&mc->lock);
-	if (WARN_ON(!mc->nobjs))
+	if (WARN_ON(!mc->nobjs)) {
 		p = mmu_memory_cache_alloc_obj(mc, GFP_ATOMIC | __GFP_ACCOUNT);
-	else
+	} else {
 		p = mc->objects[--mc->nobjs];
+	}
   spin_unlock(&mc->lock);
 	BUG_ON(!p);
 	return p;
+}
+
+void kvm_mmu_memory_cache_free(struct kvm_mmu_memory_cache *mc, void *p)
+{
+	if (WARN_ON(mc->nobjs >= mc->capacity)) {
+		BUG();
+	}
+	mc->objects[mc->nobjs++] = p;
 }
 #endif
 

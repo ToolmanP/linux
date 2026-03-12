@@ -13,6 +13,8 @@
 
 #include <linux/module.h>
 #include <linux/entry-kvm.h>
+#include <linux/mman.h>
+#include <linux/kvm_host.h>
 
 #include <asm/gsseg.h>
 #include <asm/io_bitmap.h>
@@ -2298,6 +2300,7 @@ static int handle_hc_sync_free_pages(struct kvm *kvm)
 
 static int handle_hc_set_page_offset_base(struct kvm_vcpu *vcpu, unsigned long base)
 {
+	pr_info("%s: set page offset base to %#lx\n", __func__, base);
 	vcpu->kvm->page_offset_base = base;
 	return 1;
 }
@@ -2305,6 +2308,99 @@ static int handle_hc_set_page_offset_base(struct kvm_vcpu *vcpu, unsigned long b
 static int handle_hc_virtio_kick(struct kvm_vcpu *vcpu, unsigned long addr, unsigned long width) {
   vhost_net_handle_tx(vcpu->kvm->vhost_net);
   return 1;
+}
+
+extern int runpv_faultin_direct_mapping(
+	struct kvm_vcpu *vcpu,
+	unsigned long gfn,
+	unsigned long pfn
+);
+
+#define RUNPV_BATCHED_PAGES_MAX_NR 128
+
+static inline unsigned int __alloc_from_buddy(struct kvm_vcpu *vcpu, unsigned long *gfns, unsigned int *orders, unsigned long nr_pages)
+{
+	unsigned long i, j;
+	int r;
+	unsigned int page_count = 0;
+
+	for (i = 0; i < nr_pages; i++) {
+
+		page_count += (1 << orders[i]);
+		runpv_mark_kpfn(vcpu, gfns[i], orders[i]);
+
+		for (j = 0; j < (1 << orders[i]); j++) {
+
+			unsigned long gfn = gfns[i] + j;
+			kvm_pfn_t pfn = gfn_to_pfn(vcpu->kvm, gfn);
+			BUG_ON(is_error_noslot_pfn(pfn));
+			kvm_release_pfn_clean(pfn);
+			r = runpv_faultin_direct_mapping(vcpu, gfn, pfn);
+		}
+	}
+	return page_count;
+}
+
+static unsigned int handle_hc_alloc_from_buddy(struct kvm_vcpu *vcpu, unsigned long gfns_gva, unsigned long orders_gva, unsigned long nr_pages) {
+	unsigned int count = 0;
+	unsigned long *gfns = kmalloc(nr_pages * sizeof(unsigned long), GFP_KERNEL);
+	unsigned int *orders = kmalloc(nr_pages * sizeof(unsigned int), GFP_KERNEL);
+	struct x86_exception exception;
+	int r;
+
+	r = kvm_read_guest_virt(vcpu, gfns_gva, gfns, nr_pages * sizeof(unsigned long), &exception);
+	BUG_ON(r != X86EMUL_CONTINUE);
+	r = kvm_read_guest_virt(vcpu, orders_gva, orders, nr_pages * sizeof(unsigned int), &exception);
+	BUG_ON(r != X86EMUL_CONTINUE);
+	count = __alloc_from_buddy(vcpu, gfns, orders, nr_pages);
+	kfree(gfns);
+	kfree(orders);
+	return 1;
+}
+
+static inline unsigned int __free_to_buddy(struct kvm_vcpu *vcpu, unsigned long *gfns, unsigned int *orders, unsigned long nr_pages)
+{
+	unsigned long i;
+	unsigned int page_count = 0;
+  gfn_t gfn;
+
+	for (i = 0; i < nr_pages; i++) {
+		page_count += (1 << orders[i]);
+		gfn = gfns[i];
+		runpv_free_kpfn(vcpu, gfn, orders[i]);
+	}
+	return page_count;
+}
+
+static unsigned int handle_hc_free_to_buddy(struct kvm_vcpu *vcpu, unsigned long gfns_gva, unsigned long orders_gva, unsigned long nr_pages) {
+	unsigned int count = 0;
+	unsigned long *gfns = kmalloc(nr_pages * sizeof(unsigned long), GFP_KERNEL);
+	unsigned int *orders = kmalloc(nr_pages * sizeof(unsigned int), GFP_KERNEL);
+	struct x86_exception exception;
+	int r;
+
+	r = kvm_read_guest_virt(vcpu, gfns_gva, gfns, nr_pages * sizeof(unsigned long), &exception);
+	BUG_ON(r != X86EMUL_CONTINUE);
+	r = kvm_read_guest_virt(vcpu, orders_gva, orders, nr_pages * sizeof(unsigned int), &exception);
+	BUG_ON(r != X86EMUL_CONTINUE);
+	count = __free_to_buddy(vcpu, gfns, orders, nr_pages);
+	kfree(gfns);
+	kfree(orders);
+	// pr_info("%s: free %u pages to buddy\n", __func__, count);
+	return 1;
+}
+
+static int handle_hc_alloc_pte(struct kvm_vcpu *vcpu, unsigned long gfn, unsigned long level) {
+	// pr_info("alloc pte gfn %#lx level %d\n", gfn, level);
+	int ret = runpv_mmu_alloc_pte(vcpu, gfn, level);
+	kvm_rax_write(vcpu, ret);
+	return 1;
+}
+
+static int handle_hc_release_pte(struct kvm_vcpu *vcpu, unsigned long gfn, unsigned long level) {
+	int ret = runpv_mmu_release_pte(vcpu, gfn, level);
+	kvm_rax_write(vcpu, ret);
+	return 1;
 }
 
 static int handle_kvm_hypercall(struct kvm_vcpu *vcpu)
@@ -2373,6 +2469,14 @@ static int handle_exit_syscall(struct kvm_vcpu *vcpu)
     return handle_hc_mark_kpfn(vcpu, a0, a1);
   case PVM_HC_FREE_KPFN:
     return handle_hc_free_kpfn(vcpu, a0, a1);
+	case PVM_HC_ALLOC_FROM_BUDDY:
+		return handle_hc_alloc_from_buddy(vcpu, a0, a1, a2);
+	case PVM_HC_FREE_TO_BUDDY:
+		return handle_hc_free_to_buddy(vcpu, a0, a1, a2);
+	case PVM_HC_ALLOC_PTE:
+		return handle_hc_alloc_pte(vcpu, a0, a1);
+	case PVM_HC_RELEASE_PTE:
+		return handle_hc_release_pte(vcpu, a0, a1);
 	default:
 		return handle_kvm_hypercall(vcpu);
 	}
@@ -2978,6 +3082,8 @@ static fastpath_t pvm_vcpu_run(struct kvm_vcpu *vcpu)
 	this_cpu_write(cpu_tss_rw.tss_ex.page_array_base, vcpu->kvm->page_array_base);
 	this_cpu_write(cpu_tss_rw.tss_ex.page_offset_base, vcpu->kvm->page_offset_base);
 	this_cpu_write(cpu_tss_rw.tss_ex.mmu_lock_ptr, (unsigned long)&vcpu->kvm->mmu_lock);
+	this_cpu_write(cpu_tss_rw.tss_ex.vcpu_ptr, (unsigned long)vcpu);
+	this_cpu_write(cpu_tss_rw.tss_ex.set_pte_ptr, (unsigned long)runpv_mmu_set_pte);
 
 	trace_kvm_entry(vcpu);
 

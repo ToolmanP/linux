@@ -772,6 +772,7 @@ static inline void __free_one_page(struct page *page,
 	unsigned long combined_pfn;
 	struct page *buddy;
 	bool to_tail;
+	runpv_pfn_event_add(RUNPV_PFN_EVENT_FREE, page, order);
 
 	VM_BUG_ON(!zone_is_initialized(zone));
 	VM_BUG_ON_PAGE(page->flags & PAGE_FLAGS_CHECK_AT_PREP, page);
@@ -871,6 +872,7 @@ int split_free_page(struct page *free_page,
 		return ret;
 
 	spin_lock_irqsave(&zone->lock, flags);
+	runpv_pfn_event_enter(RUNPV_PFN_EVENT_FREE);
 
 	if (!PageBuddy(free_page) || buddy_order(free_page) != order) {
 		ret = -ENOENT;
@@ -898,6 +900,7 @@ int split_free_page(struct page *free_page,
 			split_pfn_offset = (1UL << order) - (pfn - free_page_pfn);
 	}
 out:
+	runpv_pfn_event_exit(RUNPV_PFN_EVENT_FREE);
 	spin_unlock_irqrestore(&zone->lock, flags);
 	return ret;
 }
@@ -1083,6 +1086,12 @@ static __always_inline bool free_pages_prepare(struct page *page,
 	bool compound = PageCompound(page);
   bool runpv = TestClearPageRunpv(page);
 
+#ifdef CONFIG_RUNPV_GUEST
+	// RUNPV-TODO: should alter perm of the write-protect guest pt
+	if (page->host_page == 0xdead)
+		return false;
+#endif
+
 	VM_BUG_ON_PAGE(PageTail(page), page);
 
 	trace_mm_page_free(page, order);
@@ -1205,6 +1214,7 @@ static void free_pcppages_bulk(struct zone *zone, int count,
 	pindex = pindex - 1;
 
 	spin_lock_irqsave(&zone->lock, flags);
+	runpv_pfn_event_enter(RUNPV_PFN_EVENT_FREE);
 	isolated_pageblocks = has_isolate_pageblock(zone);
 
 	while (count > 0) {
@@ -1242,6 +1252,7 @@ static void free_pcppages_bulk(struct zone *zone, int count,
 		} while (count > 0 && !list_empty(list));
 	}
 
+	runpv_pfn_event_exit(RUNPV_PFN_EVENT_FREE);
 	spin_unlock_irqrestore(&zone->lock, flags);
 }
 
@@ -1253,11 +1264,13 @@ static void free_one_page(struct zone *zone,
 	unsigned long flags;
 
 	spin_lock_irqsave(&zone->lock, flags);
+	runpv_pfn_event_enter(RUNPV_PFN_EVENT_FREE);
 	if (unlikely(has_isolate_pageblock(zone) ||
 		is_migrate_isolate(migratetype))) {
 		migratetype = get_pfnblock_migratetype(page, pfn);
 	}
 	__free_one_page(page, pfn, zone, order, migratetype, fpi_flags);
+	runpv_pfn_event_exit(RUNPV_PFN_EVENT_FREE);
 	spin_unlock_irqrestore(&zone->lock, flags);
 }
 
@@ -1280,11 +1293,13 @@ static void __free_pages_ok(struct page *page, unsigned int order,
 	migratetype = get_pfnblock_migratetype(page, pfn);
 
 	spin_lock_irqsave(&zone->lock, flags);
+	runpv_pfn_event_enter(RUNPV_PFN_EVENT_FREE);
 	if (unlikely(has_isolate_pageblock(zone) ||
 		is_migrate_isolate(migratetype))) {
 		migratetype = get_pfnblock_migratetype(page, pfn);
 	}
 	__free_one_page(page, pfn, zone, order, migratetype, fpi_flags);
+	runpv_pfn_event_exit(RUNPV_PFN_EVENT_FREE);
 	spin_unlock_irqrestore(&zone->lock, flags);
 
 	__count_vm_events(PGFREE, 1 << order);
@@ -1496,7 +1511,7 @@ inline void post_alloc_hook(struct page *page, unsigned int order,
 
   /* RUNPV: (fast) hypercall to prefault shadow pages (we manually tag those interested) */
   if (gfp_flags & __GFP_RUNPV)
-	  runpv_alloc_page_hook(page, order);
+	  runpv_alloc_page_hook(page, order, gfp_flags);
 
   BUG_ON((gfp_flags & __GFP_RUNPV) && (gfp_flags & __GFP_PT));
 
@@ -1593,6 +1608,7 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
 		trace_mm_page_alloc_zone_locked(page, order, migratetype,
 				pcp_allowed_order(order) &&
 				migratetype < MIGRATE_PCPTYPES);
+		runpv_pfn_event_add(RUNPV_PFN_EVENT_ALLOC, page, order);
 		return page;
 	}
 
@@ -2140,6 +2156,7 @@ static int rmqueue_bulk(struct zone *zone, unsigned int order,
 	int i;
 
 	spin_lock_irqsave(&zone->lock, flags);
+	runpv_pfn_event_enter(RUNPV_PFN_EVENT_ALLOC);
 	for (i = 0; i < count; ++i) {
 		struct page *page = __rmqueue(zone, order, migratetype,
 								alloc_flags);
@@ -2163,6 +2180,7 @@ static int rmqueue_bulk(struct zone *zone, unsigned int order,
 	}
 
 	__mod_zone_page_state(zone, NR_FREE_PAGES, -(i << order));
+	runpv_pfn_event_exit(RUNPV_PFN_EVENT_ALLOC);
 	spin_unlock_irqrestore(&zone->lock, flags);
 
 	return i;
@@ -2734,6 +2752,7 @@ struct page *rmqueue_buddy(struct zone *preferred_zone, struct zone *zone,
 	do {
 		page = NULL;
 		spin_lock_irqsave(&zone->lock, flags);
+		runpv_pfn_event_enter(RUNPV_PFN_EVENT_ALLOC);
 		if (alloc_flags & ALLOC_HIGHATOMIC)
 			page = __rmqueue_smallest(zone, order, MIGRATE_HIGHATOMIC);
 		if (!page) {
@@ -2749,12 +2768,14 @@ struct page *rmqueue_buddy(struct zone *preferred_zone, struct zone *zone,
 				page = __rmqueue_smallest(zone, order, MIGRATE_HIGHATOMIC);
 
 			if (!page) {
+				runpv_pfn_event_exit(RUNPV_PFN_EVENT_ALLOC);
 				spin_unlock_irqrestore(&zone->lock, flags);
 				return NULL;
 			}
 		}
 		__mod_zone_freepage_state(zone, -(1 << order),
 					  get_pcppage_migratetype(page));
+		runpv_pfn_event_exit(RUNPV_PFN_EVENT_ALLOC);
 		spin_unlock_irqrestore(&zone->lock, flags);
 	} while (check_new_pages(page, order));
 
