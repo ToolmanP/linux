@@ -272,9 +272,9 @@ static void runpv_flush_tlb_user(void)
 
 void __init runpv_init_direct_mapping_shadow(unsigned long start_pfn, unsigned long end_pfn)
 {
-	int ret;
-	ret = pvm_hypercall2(PVM_HC_INIT_DIRECT_MAPPING_SHADOW, start_pfn, end_pfn);
-	BUG_ON(ret < 0);
+	// int ret;
+	// ret = pvm_hypercall2(PVM_HC_INIT_DIRECT_MAPPING_SHADOW, start_pfn, end_pfn);
+	// BUG_ON(ret < 0);
 }
 
 static void runpv_flush_tlb_kernel(void)
