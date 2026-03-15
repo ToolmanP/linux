@@ -198,9 +198,41 @@ static __always_inline unsigned long runpv_gpt2spt_base(void)
 	return val;
 }
 
+unsigned long runpv_guest_ptep_get(unsigned long *ptep)
+{
+	unsigned long gpa = __pa(ptep);
+	unsigned long gfn, idx, spte, gpte, guest_other_bits, shadow_ad_bits;
+	void **gpt2spt;
+	void *spt;
+
+	gfn = gpa >> PAGE_SHIFT;
+	gpt2spt = (void **)runpv_gpt2spt_base();
+	spt = gpt2spt[gfn];
+
+	if (spt == NULL)
+		return READ_ONCE(*ptep);
+
+	idx = ((unsigned long)ptep & (PAGE_SIZE - 1)) / sizeof(*ptep);
+	do {
+		gpte = READ_ONCE(*ptep);
+		smp_rmb();
+		if (!(gpte & _PAGE_PRESENT))
+			return gpte;
+		spte = READ_ONCE(((unsigned long *)spt)[idx]);
+		smp_rmb();
+	} while (unlikely(gpte != READ_ONCE(*ptep)));
+
+	guest_other_bits = gpte & ~(_PAGE_ACCESSED | _PAGE_DIRTY);
+	shadow_ad_bits = spte & (_PAGE_ACCESSED | _PAGE_DIRTY);
+	return guest_other_bits | shadow_ad_bits;
+}
+
 pte_t runpv_ptep_get(pte_t *ptep)
 {
-	return native_make_pte(runpv_hypercall1_retry(RUNPV_HC_MMU_PTEP_GET, (long)ptep));
+	unsigned long guest_read = runpv_guest_ptep_get((unsigned long *)ptep);
+	// unsigned long host_read = runpv_hypercall1_retry(RUNPV_HC_MMU_PTEP_GET, (long)ptep);
+	// BUG_ON(guest_read != host_read);
+	return native_make_pte(guest_read);
 }
 EXPORT_SYMBOL_GPL(runpv_ptep_get);
 
