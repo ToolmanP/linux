@@ -2394,6 +2394,7 @@ static inline unsigned int __alloc_from_buddy(struct kvm_vcpu *vcpu, unsigned lo
 		for (j = 0; j < (1 << orders[i]); j++) {
 			gfn = gfns[i] + j;
       pfn = gfn_to_pfn(vcpu->kvm, gfn);
+      kvm_release_pfn_clean(pfn);
 		}
 	}
 
