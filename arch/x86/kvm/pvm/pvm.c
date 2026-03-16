@@ -3508,12 +3508,16 @@ static int pvm_vm_init(struct kvm *kvm)
 		kvm->gpt2spt_npages = array_size;
 		kvm->gpt2spt_base = (unsigned long)gpt2spt;
 	}
+  init_srcu_struct(&kvm->arch.mmu_srcu);
 	return 0;
 }
 
 static void pvm_vm_destroy(struct kvm *kvm)
 {
 	unsigned int i;
+
+  srcu_barrier(&kvm->arch.mmu_srcu);
+  cleanup_srcu_struct(&kvm->arch.mmu_srcu);
 
 	if (kvm->gpt2spt_base)
 		vunmap((void *)kvm->gpt2spt_base);

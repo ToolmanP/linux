@@ -7914,7 +7914,6 @@ void kvm_mmu_init_vm(struct kvm *kvm)
 	INIT_LIST_HEAD(&kvm->arch.possible_nx_huge_pages);
 	spin_lock_init(&kvm->arch.mmu_unsync_pages_lock);
   spin_lock_init(&kvm->arch.active_mmu_lock);
-  init_srcu_struct(&kvm->arch.mmu_srcu);
   spin_lock_init(&kvm->mmu_stat_lock);
 
   for(int i = 0; i <= PT64_ROOT_MAX_LEVEL; i++)
@@ -7953,8 +7952,6 @@ void kvm_mmu_uninit_vm(struct kvm *kvm)
 		kvm_mmu_uninit_tdp_mmu(kvm);
 
 	mmu_free_vm_memory_caches(kvm);
-  srcu_barrier(&kvm->arch.mmu_srcu);
-  cleanup_srcu_struct(&kvm->arch.mmu_srcu);
 }
 
 static bool kvm_rmap_zap_gfn_range(struct kvm *kvm, gfn_t gfn_start, gfn_t gfn_end)
