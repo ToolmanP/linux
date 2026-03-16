@@ -3137,7 +3137,7 @@ static struct kvm_mmu_page *kvm_mmu_get_child_sp_atomic(struct kvm_vcpu *vcpu,
 	if (unlikely(pvm_mmu_p4d_at_la57_pgd511(vcpu->kvm, sptep)))
 		role.host_mmu_la57_top_p4d = 1;
 
-	return kvm_mmu_get_shadow_page_atomic(vcpu, gfn, role);
+	return kvm_mmu_find_shadow_page_atomic(vcpu, gfn, role);
 }
 
 static void shadow_walk_init_using_root(struct kvm_shadow_walk_iterator *iterator,
@@ -4380,10 +4380,10 @@ long runpv_mmu_entry_set(struct kvm_vcpu *vcpu,
 		rcu_idx = srcu_read_lock(&vcpu->kvm->arch.mmu_srcu);
 		sp = runpv_mmu_get_sptep(vcpu, role, ptep_pa, &sptep);
 		if (!IS_ERR(sp)) {
-			if (is_shadow_present_pte(*sptep)) {
-				*sptep = 0;
-				rmap_remove(vcpu->kvm, sptep);
-			}
+
+			if (is_shadow_present_pte(*sptep))
+        drop_spte(vcpu->kvm, sptep);
+
 			sp_write_unlock(vcpu->kvm, sp);
 		}
 		srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
