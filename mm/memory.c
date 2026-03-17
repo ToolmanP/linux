@@ -3112,7 +3112,7 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 		goto out;
 
 	if (is_zero_pfn(pte_pfn(vmf->orig_pte))) {
-    new_folio = vma_alloc_zeroed_movable_folio_runpv(vma, vmf->address);
+		new_folio = vma_alloc_zeroed_movable_folio(vma, vmf->address);
 		if (!new_folio)
 			goto oom;
 	} else {
@@ -4170,7 +4170,7 @@ static vm_fault_t do_anonymous_page(struct vm_fault *vmf)
 	if (unlikely(anon_vma_prepare(vma)))
 		goto oom;
 
-  folio = vma_alloc_zeroed_movable_folio_runpv(vma, vmf->address);
+	folio = vma_alloc_zeroed_movable_folio(vma, vmf->address);
 
 	if (!folio)
 		goto oom;

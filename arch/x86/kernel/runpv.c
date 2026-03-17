@@ -446,7 +446,6 @@ EXPORT_SYMBOL_GPL(runpv_pmdp_invalidate_ad);
 
 void runpv_alloc_page_hook(struct page *page, unsigned int order, gfp_t gfp_flags)
 {
-  SetPageRunpv(page);
 	if (gfp_flags & __GFP_PT) {
 		page->host_page = 0xdead;
 	}

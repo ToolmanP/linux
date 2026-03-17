@@ -1084,7 +1084,6 @@ static __always_inline bool free_pages_prepare(struct page *page,
 	bool skip_kasan_poison = should_skip_kasan_poison(page, fpi_flags);
 	bool init = want_init_on_free();
 	bool compound = PageCompound(page);
-  bool runpv = TestClearPageRunpv(page);
 
 #ifdef CONFIG_RUNPV_GUEST
 	// RUNPV-TODO: should alter perm of the write-protect guest pt
@@ -1184,8 +1183,7 @@ static __always_inline bool free_pages_prepare(struct page *page,
 
 	debug_pagealloc_unmap_pages(page, 1 << order);
 
-  if(runpv)
-	  runpv_free_page_hook(page, order);
+	runpv_free_page_hook(page, order);
 
 	return true;
 }
@@ -1509,11 +1507,8 @@ inline void post_alloc_hook(struct page *page, unsigned int order,
 	set_page_private(page, 0);
 	set_page_refcounted(page);
 
-  /* RUNPV: (fast) hypercall to prefault shadow pages (we manually tag those interested) */
-  if (gfp_flags & __GFP_RUNPV)
-	  runpv_alloc_page_hook(page, order, gfp_flags);
+	runpv_alloc_page_hook(page, order, gfp_flags);
 
-  BUG_ON((gfp_flags & __GFP_RUNPV) && (gfp_flags & __GFP_PT));
 
 	arch_alloc_page(page, order);
 	debug_pagealloc_map_pages(page, 1 << order);
