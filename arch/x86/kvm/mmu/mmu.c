@@ -1645,6 +1645,30 @@ static void drop_spte_vcpu(struct kvm_vcpu *vcpu, u64 *sptep)
 	if (is_shadow_present_pte(old_spte))
 		rmap_remove_vcpu(vcpu, sptep);
 }
+static int try_drop_obsolete_spte(struct kvm *kvm, u64 *sptep, bool flush)
+{
+	struct kvm_mmu_page *sp;
+  u64 old_spte;
+  int ret;
+
+	sp = sptep_to_sp(sptep);
+	WARN_ON_ONCE(sp->role.level == PG_LEVEL_4K);
+
+	old_spte = __update_clear_spte_slow(sptep, 0ull);
+  sp = spte_to_child_sp(old_spte);
+
+  ret = sp_try_write_lock(kvm, sp);
+
+  if(ret < 0)
+    return ret;
+
+	mmu_page_remove_parent_pte(kvm, sp, sptep);
+  sp_write_unlock(kvm, sp);
+
+	if (flush)
+		kvm_flush_remote_tlbs_sptep(kvm, sptep);
+  return 0;
+}
 
 static void drop_obsolete_spte(struct kvm *kvm, u64 *sptep, bool flush)
 {
@@ -3279,18 +3303,23 @@ static void link_shadow_page(struct kvm_vcpu *vcpu, u64 *sptep,
 	__link_shadow_page(vcpu->kvm, &vcpu->arch.mmu_pte_list_desc_cache, sptep, sp, true);
 }
 
-static void link_shadow_page_atomic(struct kvm_vcpu *vcpu, u64 *sptep,
+static int link_shadow_page_atomic(struct kvm_vcpu *vcpu, u64 *sptep,
 			     struct kvm_mmu_page *sp)
 {
 	u64 spte;
 	struct kvm_mmu_memory_cache *cache = &vcpu->arch.mmu_pte_list_desc_cache;
+  int ret;
 
 	BUILD_BUG_ON(VMX_EPT_WRITABLE_MASK != PT_WRITABLE_MASK);
 
 	if (is_shadow_present_pte(*sptep)) {
+
     if(spte_to_child_sp(*sptep) == sp)
-      return;
-		drop_obsolete_spte(vcpu->kvm, sptep, true);
+      return 0;
+
+		ret = try_drop_obsolete_spte(vcpu->kvm, sptep, true);
+    if (ret < 0)
+      return -EAGAIN;
   }
 
 	spte = make_nonleaf_spte(sp->spt, sp_ad_disabled(sp));
@@ -3309,6 +3338,8 @@ static void link_shadow_page_atomic(struct kvm_vcpu *vcpu, u64 *sptep,
 	if (WARN_ON_ONCE(sp->unsync_children) || sp->unsync) {
 		mark_unsync(sptep);
 	}
+
+  return 0;
 }
 
 static void validate_direct_spte(struct kvm_vcpu *vcpu, u64 *sptep,
@@ -4335,9 +4366,9 @@ retry:
 		goto retry;
 	}
 
-	link_shadow_page_atomic(vcpu, sptep, sp);
+	ret = link_shadow_page_atomic(vcpu, sptep, sp);
 	sp_write_unlock(vcpu->kvm, sp);
-	return 0;
+	return ret;
 }
 
 /*
