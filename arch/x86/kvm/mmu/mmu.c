@@ -2963,7 +2963,10 @@ static struct kvm_mmu_page *kvm_mmu_alloc_shadow_page(struct kvm *kvm,
 	struct kvm_mmu_page *sp;
 
 	sp = kvm_mmu_memory_cache_alloc(caches->page_header_cache);
-	sp->spt = kvm_mmu_memory_cache_alloc(caches->shadow_page_cache);
+  if(role.level >= PT64_ROOT_4LEVEL)
+    sp->spt = shadow_root_alloc(caches->shadow_page_cache);
+  else
+    sp->spt = kvm_mmu_memory_cache_alloc(caches->shadow_page_cache);
 	kvm->gpt2spt_arr[gfn] = (void *)(runpv_ro_dm_start + __pa(sp->spt));
 	if (!role.direct)
 		sp->shadowed_translation = kvm_mmu_memory_cache_alloc(caches->shadowed_info_cache);
