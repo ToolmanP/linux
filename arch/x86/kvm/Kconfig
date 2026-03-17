@@ -134,7 +134,7 @@ config KVM_RUNPV
 			Provides RUNPV Hypervisor
 
 config DEBUG_RUNPV_MMU
-	bool "RunPV Hypervisor"
+	bool "Enable RUNPV MMU Debug Logging"
 	depends on KVM_RUNPV
 	help
       Debug RUNPV MMU
