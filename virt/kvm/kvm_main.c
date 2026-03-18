@@ -1170,6 +1170,72 @@ int __weak kvm_arch_create_vm_debugfs(struct kvm *kvm)
 	return 0;
 }
 
+struct page *kvm_get_kpfn_page(void *kvm_ptr, unsigned long hva)
+{
+	struct kvm *kvm = kvm_ptr;
+	struct interval_tree_node *node;
+	struct kvm_memory_slot *slot;
+	struct kvm_memslots *slots;
+	struct kvm_kpfn_element *elem;
+	struct page *page = NULL;
+	gfn_t gfn;
+	unsigned long flags;
+	int i, idx;
+
+	if (!kvm)
+		return NULL;
+
+	if (!kvm_get_kvm_safe(kvm))
+		return NULL;
+
+	idx = srcu_read_lock(&kvm->srcu);
+
+	for (i = 0; i < KVM_ADDRESS_SPACE_NUM; i++) {
+		slots = __kvm_memslots(kvm, i);
+
+		for (node = interval_tree_iter_first(&slots->hva_tree, hva, hva);
+		     node;
+		     node = interval_tree_iter_next(node, hva, hva)) {
+			slot = container_of(node, struct kvm_memory_slot,
+					    hva_node[slots->node_idx]);
+			gfn = hva_to_gfn_memslot(hva, slot);
+			if (!kvm_kpfn_ready_memslot(slot, gfn))
+				continue;
+
+			elem = &slot->arch.kpfn_elems[gfn - slot->base_gfn];
+retry:
+			spin_lock_irqsave(&elem->lock, flags);
+			if (elem->pfn == KVM_PFN_ERR_FAULT) {
+				spin_unlock_irqrestore(&elem->lock, flags);
+				page = alloc_page(GFP_KERNEL);
+				if (!page)
+					goto out_unlock;
+
+				spin_lock_irqsave(&elem->lock, flags);
+				if (elem->pfn == KVM_PFN_ERR_FAULT) {
+					elem->pfn = page_to_pfn(page);
+				} else {
+					spin_unlock_irqrestore(&elem->lock, flags);
+					put_page(page);
+					page = NULL;
+					goto retry;
+				}
+			} else {
+				page = pfn_to_page(elem->pfn);
+			}
+
+			get_page(page);
+			spin_unlock_irqrestore(&elem->lock, flags);
+			goto out_unlock;
+		}
+	}
+
+out_unlock:
+	srcu_read_unlock(&kvm->srcu, idx);
+	kvm_put_kvm(kvm);
+	return page;
+}
+
 static struct kvm *kvm_create_vm(unsigned long type, const char *fdname)
 {
 	struct kvm *kvm = kvm_arch_alloc_vm();
@@ -1272,6 +1338,11 @@ static struct kvm *kvm_create_vm(unsigned long type, const char *fdname)
 	list_add(&kvm->vm_list, &vm_list);
 	mutex_unlock(&kvm_lock);
 
+	BUG_ON(current->mm->kvm);
+	BUG_ON(current->mm->get_kpfn_page);
+	current->mm->kvm = kvm;
+	current->mm->get_kpfn_page = kvm_get_kpfn_page;
+
 	preempt_notifier_inc();
 	kvm_init_pm_notifier(kvm);
 
@@ -1358,6 +1429,8 @@ static void kvm_destroy_vm(struct kvm *kvm)
 #endif
 	kvm_arch_destroy_vm(kvm);
 	kvm_destroy_devices(kvm);
+	mm->get_kpfn_page = NULL;
+	mm->kvm = NULL;
 	for (i = 0; i < KVM_ADDRESS_SPACE_NUM; i++) {
 		kvm_free_memslots(kvm, &kvm->__memslots[i][0]);
 		kvm_free_memslots(kvm, &kvm->__memslots[i][1]);

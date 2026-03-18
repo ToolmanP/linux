@@ -4142,8 +4142,10 @@ static vm_fault_t do_anonymous_page(struct vm_fault *vmf)
 	if (pte_alloc(vma->vm_mm, vmf->pmd))
 		return VM_FAULT_OOM;
 
+	struct page *page = vma_alloc_kpfn_page(vma, vmf->address);
+
 	/* Use the zero-page for reads */
-	if (!(vmf->flags & FAULT_FLAG_WRITE) &&
+	if (!page && !(vmf->flags & FAULT_FLAG_WRITE) &&
 			!mm_forbids_zeropage(vma->vm_mm)) {
 		entry = pte_mkspecial(pfn_pte(my_zero_pfn(vmf->address),
 						vma->vm_page_prot));
@@ -4170,7 +4172,10 @@ static vm_fault_t do_anonymous_page(struct vm_fault *vmf)
 	if (unlikely(anon_vma_prepare(vma)))
 		goto oom;
 
-	folio = vma_alloc_zeroed_movable_folio(vma, vmf->address);
+	if (page)
+		folio = page_folio(page);
+	else
+		folio = vma_alloc_zeroed_movable_folio(vma, vmf->address);
 
 	if (!folio)
 		goto oom;

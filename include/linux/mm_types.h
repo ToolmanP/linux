@@ -885,6 +885,10 @@ struct mm_struct {
 		spinlock_t			ioctx_lock;
 		struct kioctx_table __rcu	*ioctx_table;
 #endif
+#ifdef CONFIG_KVM_RUNPV
+		void *kvm;
+		struct page *(*get_kpfn_page)(void *, unsigned long);
+#endif
 #ifdef CONFIG_MEMCG
 		/*
 		 * "owner" points to a task that is regarded as the canonical
@@ -989,6 +993,29 @@ struct mm_struct {
 #define MM_MT_FLAGS	(MT_FLAGS_ALLOC_RANGE | MT_FLAGS_LOCK_EXTERN | \
 			 MT_FLAGS_USE_RCU)
 extern struct mm_struct init_mm;
+
+#ifdef CONFIG_KVM_RUNPV
+static inline struct page *vma_alloc_kpfn_page(struct vm_area_struct *vma,
+					  unsigned long addr)
+{
+	struct page *page;
+
+	if (!vma->vm_mm->kvm || !vma->vm_mm->get_kpfn_page)
+		return NULL;
+
+	page = vma->vm_mm->get_kpfn_page(vma->vm_mm->kvm, addr);
+	if (!page)
+		return NULL;
+
+	return page;
+}
+#else
+static inline struct page *vma_alloc_kpfn_page(struct vm_area_struct *vma,
+						 unsigned long addr)
+{
+	return NULL;
+}
+#endif
 
 /* Pointer magic because the dynamic array size confuses some compilers. */
 static inline void mm_init_cpumask(struct mm_struct *mm)

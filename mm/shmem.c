@@ -2225,10 +2225,15 @@ static vm_fault_t shmem_fault(struct vm_fault *vmf)
 	}
 
 	WARN_ON_ONCE(vmf->page != NULL);
-	err = shmem_get_folio_gfp(inode, vmf->pgoff, &folio, SGP_CACHE,
-				  gfp, vmf, &ret);
-	if (err)
-		return vmf_error(err);
+	struct page *page = vma_alloc_kpfn_page(vmf->vma, vmf->address);
+	if (page) {
+		folio = page_folio(page);
+	} else {
+		err = shmem_get_folio_gfp(inode, vmf->pgoff, &folio, SGP_CACHE,
+					  gfp, vmf, &ret);
+		if (err)
+			return vmf_error(err);
+	}
 	if (folio) {
 		vmf->page = folio_file_page(folio, vmf->pgoff);
 		ret |= VM_FAULT_LOCKED;
