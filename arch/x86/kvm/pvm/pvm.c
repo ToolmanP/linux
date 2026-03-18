@@ -2386,15 +2386,13 @@ static inline unsigned int __alloc_from_buddy(struct kvm_vcpu *vcpu, unsigned lo
 	int i, j;
 	unsigned int page_count = 0;
   gfn_t gfn;
-  kvm_pfn_t pfn;
 
 	for (i = 0; i < nr_pages; i++) {
 		page_count += (1 << orders[i]);
 		runpv_mark_kpfn(vcpu, gfns[i], orders[i]);
 		for (j = 0; j < (1 << orders[i]); j++) {
 			gfn = gfns[i] + j;
-      pfn = gfn_to_pfn(vcpu->kvm, gfn);
-      kvm_release_pfn_clean(pfn);
+      runpv_faultin_direct_mapping_fast(vcpu, gfn);
 		}
 	}
 
