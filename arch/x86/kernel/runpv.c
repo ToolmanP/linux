@@ -466,9 +466,6 @@ static DEFINE_PER_CPU(struct runpv_batched_pages, runpv_batched_pages) = {
 
 void runpv_pfn_event_enter(int event)
 {
-#ifndef CONFIG_RUNPV_MEM
-	return;
-#endif
 	struct runpv_batched_pages *batched_pages = get_cpu_ptr(&runpv_batched_pages);
 	BUG_ON(batched_pages->event != RUNPV_PFN_EVENT_NONE);
 	batched_pages->event = event;
@@ -478,9 +475,6 @@ EXPORT_SYMBOL_GPL(runpv_pfn_event_enter);
 
 void runpv_pfn_event_add(int event, struct page *page, unsigned int order)
 {
-#ifndef CONFIG_RUNPV_MEM
-	return;
-#endif
 	struct runpv_batched_pages *batched_pages = this_cpu_ptr(&runpv_batched_pages);
 	BUG_ON(batched_pages->event != event);
 
@@ -511,9 +505,6 @@ EXPORT_SYMBOL_GPL(runpv_pfn_event_add);
 
 void runpv_pfn_event_exit(int event)
 {
-#ifndef CONFIG_RUNPV_MEM
-	return;
-#endif
 	struct runpv_batched_pages *batched_pages = this_cpu_ptr(&runpv_batched_pages);
 	BUG_ON(batched_pages->event != event);
 	if (batched_pages->nr_pages > 0) {
@@ -648,7 +639,6 @@ void __init runpv_early_setup(unsigned long pgd)
 {
 	pvm_hypercall2(PVM_HC_ALLOC_PTE, __pa(pgd) >> PAGE_SHIFT, PVM_SET_PTE_P4D);
 
-#ifdef CONFIG_RUNPV_MEM
 	pv_ops.mmu.set_pte = runpv_set_pte;
 	pv_ops.mmu.set_pmd = runpv_set_pmd;
 	pv_ops.mmu.set_pud = runpv_set_pud;
@@ -664,7 +654,6 @@ void __init runpv_early_setup(unsigned long pgd)
 	pv_ops.mmu.release_p4d = runpv_release_p4d;
 	pv_ops.mmu.pgd_alloc = runpv_pgd_alloc;
 	pv_ops.mmu.pgd_free = runpv_pgd_free;
-#endif
 
 	pv_ops.mmu.flush_tlb_user = runpv_flush_tlb_user;
 	pv_ops.mmu.flush_tlb_kernel = runpv_flush_tlb_kernel;

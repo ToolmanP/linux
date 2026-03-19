@@ -12,8 +12,6 @@
 #define RUNPV_PFN_EVENT_ALLOC	(1)
 #define RUNPV_PFN_EVENT_FREE	(2)
 
-#define CONFIG_RUNPV_MEM
-
 struct page;
 
 #ifdef CONFIG_RUNPV_GUEST
@@ -30,7 +28,6 @@ void runpv_pfn_event_enter(int event);
 void runpv_pfn_event_add(int event, struct page *page, unsigned int order);
 void runpv_pfn_event_exit(int event);
 
-#ifdef CONFIG_RUNPV_MEM
 pte_t runpv_ptep_get(pte_t *ptep);
 pmd_t runpv_pmdp_get(pmd_t *pmdp);
 pte_t runpv_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
@@ -93,7 +90,6 @@ int runpv_pmdp_test_and_clear_young(struct vm_area_struct *vma,
 	defined(CONFIG_ARCH_HAS_NONLEAF_PMD_YOUNG)
 #define pmdp_test_and_clear_young runpv_pmdp_test_and_clear_young
 #endif
-#endif /* CONFIG_RUNPV_MEM */
 
 void __init runpv_early_setup(unsigned long pgd);
 void __init runpv_init_direct_mapping_shadow(unsigned long start_pfn, unsigned long end_pfn);
