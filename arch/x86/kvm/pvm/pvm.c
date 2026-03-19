@@ -2040,7 +2040,7 @@ static void pvm_flush_tlb_guest_current_kernel_user(struct kvm_vcpu *vcpu)
 	 * sync the current pgd and user_pgd (pvm->msr_switch_cr3)
 	 * which is a subset work of KVM_REQ_TLB_FLUSH_GUEST.
 	 */
-	kvm_make_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu);
+  pvm_flush_hwtlb_current(vcpu);
 }
 
 /*
