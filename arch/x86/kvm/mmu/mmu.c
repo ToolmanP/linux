@@ -7516,6 +7516,7 @@ EXPORT_SYMBOL_GPL(kvm_mmu_page_fault);
 static void __kvm_mmu_invalidate_addr(struct kvm_vcpu *vcpu, struct kvm_mmu *mmu,
 				      u64 addr, hpa_t root_hpa){
 	vcpu_clear_mmio_info(vcpu, addr);
+  kvm_flush_remote_tlbs(vcpu->kvm);
   return;
 }
 #else
