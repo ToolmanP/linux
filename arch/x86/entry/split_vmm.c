@@ -87,6 +87,10 @@ long runpv_hc_handle_mmu_op(long nr, long a0, long a1, long a2, long a3)
 __visible noinstr long do_fast_hypercall(long nr, long a0, long a1, long a2, long a3) {
 	long ret = 0;
 
+#ifndef CONFIG_RUNPV_MEM
+	BUG();
+#endif
+
 	switch (nr) {
 	case RUNPV_HC_MMU_PTE_SET:
 	case RUNPV_HC_MMU_PMD_SET:

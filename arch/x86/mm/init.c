@@ -810,7 +810,9 @@ void __init init_mem_mapping(void)
 	* This allows the host to skip redundant guest page table walks
 	* during subsequent page fault handling.
 	*/
+#ifdef CONFIG_RUNPV_MEM
 	runpv_init_direct_mapping_shadow(0, max_pfn);
+#endif
 
 	x86_init.hyper.init_mem_mapping();
 
