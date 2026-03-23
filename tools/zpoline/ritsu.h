@@ -1,8 +1,5 @@
 #ifndef __RITSU_H
 #define __RITSU_H
-#include <asm/processor-flags.h>
-#include <asm-generic/unistd.h>
-#include <asm/unistd.h>
 
 #define __SYS_PVCS_SET_TLS 457
 #define __SYS_SPLIT_VMM_ENABLE 458

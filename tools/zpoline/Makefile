@@ -15,9 +15,9 @@ endif
 MAKEFLAGS += -r
 
 
-override CFLAGS += -O3 -Wall -Wextra -g -D_GNU_SOURCE -shared -fPIC -ftls-model=local-dynamic
-override AFLAGS += -O3 -Wall -Wextra -g -D_GNU_SOURCE -shared -fPIC -ftls-model=local-dynamic
-override LDFLAGS += -lpthread
+override CFLAGS += -O3 -Wall -Wextra -g -D_GNU_SOURCE -shared -fPIC -ftls-model=local-dynamic -mtls-dialect=gnu
+override AFLAGS += -O3 -Wall -Wextra -g -D_GNU_SOURCE -shared -fPIC -ftls-model=local-dynamic -mtls-dialect=gnu
+override LDFLAGS += -lpthread -Wl,--no-gnu2-tls-tag
 
 ALL_TARGETS := libritsu.so
 ALL_SOS := $(patsubst %,$(OUTPUT)%,$(ALL_TARGETS))
