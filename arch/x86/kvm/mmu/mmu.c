@@ -2470,6 +2470,13 @@ static bool sp_has_gptes(struct kvm_mmu_page *sp)
       sp_read_unlock((_kvm), (_sp)); \
 		} else
 
+#define try_for_each_valid_sp_rcu(_kvm, _sp, _list, _ret) \
+	hlist_for_each_entry_rcu(_sp, _list, hash_link)			\
+		if (((_ret) = sp_try_read_lock((_kvm), (_sp)))) {			\
+      if((_ret) != -EBUSY)  \
+        sp_read_unlock((_kvm), (_sp)); \
+		} else
+
 #define for_each_gfn_valid_sp_with_gptes_rcu(_kvm, _sp, _gfn, _level)		\
 	for_each_valid_sp_rcu(_kvm, _sp,					\
 	  &(_kvm)->arch.mmu_page_hash[(_level)][kvm_page_table_hashfn(_gfn)])	\
@@ -2906,8 +2913,9 @@ kvm_mmu_find_shadow_page_atomic(struct kvm_vcpu *vcpu, gfn_t gfn, union kvm_mmu_
 	struct kvm_mmu_page *sp;
 	struct kvm *kvm = vcpu->kvm;
 	struct hlist_head *sp_list = &kvm->arch.mmu_page_hash[role.level][kvm_page_table_hashfn(gfn)];
+  int ret;
 
-	for_each_valid_sp_rcu(kvm, sp, sp_list) {
+	try_for_each_valid_sp_rcu(kvm, sp, sp_list, ret) {
 
 		if (sp->gfn != gfn) {
       sp_read_unlock(kvm, sp);
