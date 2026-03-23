@@ -29,6 +29,9 @@ static int direct_call_table[459] = {
   [__NR_lseek] = 1,
   [__NR_fsync] = 1,
   [__NR_sync] = 1,
+  [__NR_sched_yield] = 1,
+  [__NR_fstat] = 1,
+  [__NR_getdents64] = 1,
 };
 
 static __always_inline unsigned long rdgsbase(void)
