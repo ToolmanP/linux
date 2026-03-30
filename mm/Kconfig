@@ -1272,6 +1272,16 @@ config LOCK_MM_AND_FIND_VMA
 	bool
 	depends on !STACK_GROWSUP
 
+config LINUX_ALLOC_BENCH
+	bool "Built-in Linux allocator benchmark"
+	depends on PROC_FS && NUMA
+	help
+	  Build the allocator benchmark under /proc/alloc directly into the
+	  kernel image instead of as a loadable module.
+
+	  The benchmark can then be driven by writing commands to
+	  /proc/alloc/run and reading results from /proc/alloc/out.
+
 source "mm/damon/Kconfig"
 
 endmenu
