@@ -9072,3 +9072,36 @@ void runpv_free_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order)
 }
 
 EXPORT_SYMBOL_GPL(runpv_free_kpfn);
+
+void runpv_free_kpfns(struct kvm_vcpu *vcpu, unsigned long *gfns, int *orders, int nr_pages)
+{
+	struct kvm_memory_slot *slot;
+	int i, npages, idx;
+	gfn_t gfn_start, gfn_end;
+	gfn_t gfn;
+	int order;
+	struct kvm *kvm = vcpu->kvm;
+	slot = kvm_vcpu_gfn_to_memslot(vcpu, *gfns);
+
+	write_lock(&vcpu->kvm->mmu_invalidate_seq_lock);
+	for (idx = 0; idx < nr_pages; idx++) {
+		gfn = gfns[idx];
+		order = orders[idx];
+		npages = 1 << order;
+		gfn_end = gfn + npages;
+		gfn_start = gfn;
+		kvm_rmap_zap_gfn_range(kvm, gfn_start, gfn_end);
+	}
+	kvm_mmu_invalidate_begin(kvm, 0, -1ul);
+	kvm_flush_remote_tlbs(kvm);
+	kvm_mmu_invalidate_end(kvm, 0, -1ul);
+	for (idx = 0; idx < nr_pages; idx++) {
+		gfn = gfns[idx];
+		order = orders[idx];
+		npages = 1 << order;
+		for(i = 0; i < npages; i++) 
+			kvm_free_kpfn(slot, gfn + i, false, false);
+	}
+	write_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
+}
+EXPORT_SYMBOL_GPL(runpv_free_kpfns);
