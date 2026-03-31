@@ -14,6 +14,7 @@
  *   Yaniv Kamay  <yaniv@qumranet.com>
  *   Avi Kivity   <avi@qumranet.com>
  */
+#include "asm/kvm_host.h"
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include "irq.h"
@@ -9051,6 +9052,33 @@ void runpv_mark_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order)
 }
 EXPORT_SYMBOL_GPL(runpv_mark_kpfn);
 
+void runpv_mark_kpfns(struct kvm_vcpu *vcpu, unsigned long *gfns, int *orders, int nr_pages)
+{
+	bool flush = false;
+	gfn_t gfn_start, gfn_end;
+	int npages;
+	gfn_t gfn;
+	int order, idx;
+	struct kvm *kvm = vcpu->kvm;
+
+	write_lock(&kvm->mmu_invalidate_seq_lock);
+	for (idx = 0; idx < nr_pages; idx++) {
+		gfn = gfns[idx];
+		order = orders[idx];
+		npages = 1 << order;
+		gfn_end = gfn + npages;
+		gfn_start = gfn;
+		flush |= kvm_rmap_mark_gfn_range(kvm, gfn_start, gfn_end, RMAP_KERNEL);
+	}
+	if (flush) {
+		kvm_mmu_invalidate_begin(kvm, 0, -1ul);
+		kvm_flush_remote_tlbs(kvm);
+		kvm_mmu_invalidate_end(kvm, 0, -1ul);
+	}
+	write_unlock(&kvm->mmu_invalidate_seq_lock);
+}
+EXPORT_SYMBOL_GPL(runpv_mark_kpfns);
+
 void runpv_free_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order)
 {
   struct kvm_memory_slot *slot;
@@ -9081,7 +9109,6 @@ void runpv_free_kpfns(struct kvm_vcpu *vcpu, unsigned long *gfns, int *orders, i
 	gfn_t gfn;
 	int order;
 	struct kvm *kvm = vcpu->kvm;
-	slot = kvm_vcpu_gfn_to_memslot(vcpu, *gfns);
 
 	write_lock(&vcpu->kvm->mmu_invalidate_seq_lock);
 	for (idx = 0; idx < nr_pages; idx++) {
@@ -9099,6 +9126,7 @@ void runpv_free_kpfns(struct kvm_vcpu *vcpu, unsigned long *gfns, int *orders, i
 		gfn = gfns[idx];
 		order = orders[idx];
 		npages = 1 << order;
+		slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
 		for(i = 0; i < npages; i++) 
 			kvm_free_kpfn(slot, gfn + i, false, false);
 	}

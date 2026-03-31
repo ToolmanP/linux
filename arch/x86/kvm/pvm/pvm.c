@@ -2015,6 +2015,7 @@ static int handle_hc_event_window(struct kvm_vcpu *vcpu)
 extern void runpv_mark_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order);
 extern void runpv_free_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order);
 extern void runpv_free_kpfns(struct kvm_vcpu *vcpu, unsigned long *gfns, int *orders, int nr_pages);
+extern void runpv_mark_kpfns(struct kvm_vcpu *vcpu, unsigned long *gfns, int *orders, int nr_pages);
 
 static int handle_hc_mark_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order)
 {
@@ -2388,12 +2389,13 @@ static inline unsigned int __alloc_from_buddy(struct kvm_vcpu *vcpu, unsigned lo
 	unsigned int page_count = 0;
   gfn_t gfn;
 
+	runpv_mark_kpfns(vcpu, gfns, orders, nr_pages);
+
 	for (i = 0; i < nr_pages; i++) {
 		page_count += (1 << orders[i]);
-		runpv_mark_kpfn(vcpu, gfns[i], orders[i]);
 		for (j = 0; j < (1 << orders[i]); j++) {
 			gfn = gfns[i] + j;
-      runpv_faultin_direct_mapping_fast(vcpu, gfn);
+			runpv_faultin_direct_mapping_fast(vcpu, gfn);
 		}
 	}
 
