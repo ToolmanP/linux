@@ -247,9 +247,10 @@ EXPORT_SYMBOL_GPL(runpv_pmdp_get);
 pte_t runpv_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
 			       pte_t *ptep)
 {
-	return native_make_pte(runpv_hypercall2_retry(RUNPV_HC_MMU_PTEP_GET_AND_CLEAR, (long)__pa(ptep), 0));
-	pte_t pte = native_ptep_get_and_clear(ptep);
-	return pte;
+	long ret = runpv_hypercall2_retry(RUNPV_HC_MMU_PTEP_GET_AND_CLEAR, (long)__pa(ptep), 0);
+	if (IS_ERR_VALUE(ret))
+		return native_ptep_get_and_clear(ptep);
+	return native_make_pte(ret);
 }
 EXPORT_SYMBOL_GPL(runpv_ptep_get_and_clear);
 
@@ -259,9 +260,13 @@ pte_t runpv_ptep_get_and_clear_full(struct mm_struct *mm, unsigned long addr,
 	pte_t pte;
 
 	if (full) {
-		pte = native_make_pte(runpv_hypercall2_retry(RUNPV_HC_MMU_PTEP_GET_AND_CLEAR, (long)__pa(ptep), 1));
-		// pte = native_local_ptep_get_and_clear(ptep);
-		// page_table_check_pte_clear(mm, pte);
+		long ret = runpv_hypercall2_retry(RUNPV_HC_MMU_PTEP_GET_AND_CLEAR, (long)__pa(ptep), 1);
+		if (IS_ERR_VALUE(ret)) {
+			pte = native_local_ptep_get_and_clear(ptep);
+			page_table_check_pte_clear(mm, pte);
+		} else {
+			pte = native_make_pte(ret);
+		}
 	} else {
 		pte = runpv_ptep_get_and_clear(mm, addr, ptep);
 	}
@@ -273,15 +278,16 @@ EXPORT_SYMBOL_GPL(runpv_ptep_get_and_clear_full);
 void runpv_ptep_set_wrprotect(struct mm_struct *mm, unsigned long addr,
 			      pte_t *ptep)
 {
-	runpv_hypercall1_retry(RUNPV_HC_MMU_PTEP_SET_WRPROTECT, (long)__pa(ptep));
-	return;
-	pte_t old_pte, new_pte;
-
-	old_pte = READ_ONCE(*ptep);
-	do {
-		new_pte = pte_wrprotect(old_pte);
-	} while (!try_cmpxchg((long *)&ptep->pte, (long *)&old_pte,
-			      *(long *)&new_pte));
+	long ret = runpv_hypercall1_retry(RUNPV_HC_MMU_PTEP_SET_WRPROTECT, (long)__pa(ptep));
+	if (IS_ERR_VALUE(ret)) {
+		pte_t old_pte, new_pte;
+	
+		old_pte = READ_ONCE(*ptep);
+		do {
+			new_pte = pte_wrprotect(old_pte);
+		} while (!try_cmpxchg((long *)&ptep->pte, (long *)&old_pte,
+					  *(long *)&new_pte));
+	}
 }
 EXPORT_SYMBOL_GPL(runpv_ptep_set_wrprotect);
 
@@ -289,13 +295,16 @@ int runpv_ptep_set_access_flags(struct vm_area_struct *vma,
 				unsigned long address, pte_t *ptep,
 				pte_t entry, int dirty)
 {
-	return (int)runpv_hypercall3_retry(RUNPV_HC_MMU_PTEP_SET_ACCESS_FLAGS, (long)__pa(ptep), (long)entry.pte, dirty);
-	int changed = !pte_same(*ptep, entry);
-
-	if (changed && dirty)
-		set_pte(ptep, entry);
-
-	return changed;
+	long ret = runpv_hypercall3_retry(RUNPV_HC_MMU_PTEP_SET_ACCESS_FLAGS, (long)__pa(ptep), (long)entry.pte, dirty);
+	if (IS_ERR_VALUE(ret)) {
+		int changed = !pte_same(*ptep, entry);
+	
+		if (changed && dirty)
+			set_pte(ptep, entry);
+	
+		return changed;
+	}
+	return (int)ret;
 }
 EXPORT_SYMBOL_GPL(runpv_ptep_set_access_flags);
 
@@ -524,7 +533,7 @@ void runpv_pfn_event_exit(int event)
 }
 EXPORT_SYMBOL_GPL(runpv_pfn_event_exit);
 
-static void runpv_set_pte(pte_t *ptep, pte_t pteval)
+void runpv_set_pte(pte_t *ptep, pte_t pteval)
 {
 	// pr_info("%s parent %#lx pfn %#lx\n", __func__, __pa(ptep), (native_pte_val(pteval) & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT);
 	if (runpv_helper_pte_set(__pa(ptep), native_pte_val(pteval))) {
@@ -532,6 +541,7 @@ static void runpv_set_pte(pte_t *ptep, pte_t pteval)
 		native_set_pte(ptep, pteval);
 	}
 }
+EXPORT_SYMBOL(runpv_set_pte);
 
 static void runpv_set_pmd(pmd_t *pmdp, pmd_t pmdval)
 {
@@ -640,9 +650,9 @@ void __init runpv_early_setup(unsigned long pgd)
 	pvm_hypercall2(PVM_HC_ALLOC_PTE, __pa(pgd) >> PAGE_SHIFT, PVM_SET_PTE_P4D);
 
 	pv_ops.mmu.set_pte = runpv_set_pte;
-	pv_ops.mmu.set_pmd = runpv_set_pmd;
-	pv_ops.mmu.set_pud = runpv_set_pud;
-	pv_ops.mmu.set_p4d = runpv_set_p4d;
+	// pv_ops.mmu.set_pmd = runpv_set_pmd;
+	// pv_ops.mmu.set_pud = runpv_set_pud;
+	// pv_ops.mmu.set_p4d = runpv_set_p4d;
 
 	pv_ops.mmu.alloc_pte = runpv_alloc_pte;
 	pv_ops.mmu.alloc_pmd = runpv_alloc_pmd;

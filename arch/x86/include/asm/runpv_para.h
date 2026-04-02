@@ -70,26 +70,11 @@ int runpv_pmdp_test_and_clear_young(struct vm_area_struct *vma,
 #define runpv_bug_stub(...) ({ BUG(); __builtin_unreachable(); })
 
 #define ptep_get runpv_ptep_get
-#define pmdp_get runpv_pmdp_get
 #define ptep_get_and_clear runpv_ptep_get_and_clear
 #define ptep_get_and_clear_full runpv_ptep_get_and_clear_full
 #define ptep_set_wrprotect runpv_ptep_set_wrprotect
 #define ptep_set_access_flags runpv_ptep_set_access_flags
 #define ptep_test_and_clear_young runpv_ptep_test_and_clear_young
-#define pmdp_huge_get_and_clear runpv_bug_stub
-#define pudp_huge_get_and_clear runpv_bug_stub
-#define pmdp_set_wrprotect runpv_pmdp_set_wrprotect
-#define pmdp_establish runpv_pmdp_establish
-#if defined(CONFIG_TRANSPARENT_HUGEPAGE)
-#define pmdp_set_access_flags runpv_pmdp_set_access_flags
-#define pudp_set_access_flags runpv_pudp_set_access_flags
-#define pudp_test_and_clear_young runpv_pudp_test_and_clear_young
-#define pmdp_invalidate_ad runpv_bug_stub
-#endif
-#if defined(CONFIG_TRANSPARENT_HUGEPAGE) || \
-	defined(CONFIG_ARCH_HAS_NONLEAF_PMD_YOUNG)
-#define pmdp_test_and_clear_young runpv_pmdp_test_and_clear_young
-#endif
 
 void __init runpv_early_setup(unsigned long pgd);
 void __init runpv_init_direct_mapping_shadow(unsigned long start_pfn, unsigned long end_pfn);
@@ -123,10 +108,6 @@ static inline void runpv_free_page_hook(struct page *page, unsigned int order)
 }
 
 static inline void runpv_alloc_page_hook(struct page *page, unsigned int order, gfp_t gfp_flags)
-{
-
-}
-static inline void runpv_set_pte(unsigned long ptep, unsigned long pte, int level)
 {
 
 }
