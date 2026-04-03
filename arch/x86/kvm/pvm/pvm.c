@@ -3497,7 +3497,7 @@ static int pvm_vm_init(struct kvm *kvm)
 		BUG_ON(!pages);
 
 		for (i = 0; i < array_size; i++) {
-			addr = (void *)__get_free_page(GFP_KERNEL);
+			addr = (void *)__get_free_page(GFP_KERNEL | __GFP_ZERO);
 			BUG_ON(!addr);
 			pages[i] = virt_to_page(addr);
 		}

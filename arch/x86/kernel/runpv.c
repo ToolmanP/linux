@@ -224,7 +224,7 @@ unsigned long runpv_guest_ptep_get(unsigned long *ptep)
 
 	guest_other_bits = gpte & ~(_PAGE_ACCESSED | _PAGE_DIRTY);
 	shadow_ad_bits = spte & (_PAGE_ACCESSED | _PAGE_DIRTY);
-	return guest_other_bits | shadow_ad_bits;
+	return gpte | shadow_ad_bits;
 }
 
 pte_t runpv_ptep_get(pte_t *ptep)

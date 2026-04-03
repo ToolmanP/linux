@@ -3902,8 +3902,8 @@ static int mmu_set_spte_atomic(struct kvm_vcpu *vcpu, struct kvm_memory_slot *sl
 			ret = RET_PF_EMULATE;
 	}
 
-	if (flush)
-		kvm_flush_remote_tlbs_gfn(vcpu->kvm, gfn, level);
+	// if (flush)
+	// 	kvm_flush_remote_tlbs_gfn(vcpu->kvm, gfn, level);
 
 	if (!was_rmapped) {
 		WARN_ON_ONCE(ret == RET_PF_SPURIOUS);
@@ -4323,7 +4323,7 @@ static int runpv_mmu_get_access(
 
 static inline u64 runpv_compose_pte(u64 gpte, u64 spte)
 {
-	return (gpte & ~(_PAGE_ACCESSED | _PAGE_DIRTY)) |
+	return (gpte) |
 	       (spte & (_PAGE_ACCESSED | _PAGE_DIRTY));
 }
 
@@ -4564,8 +4564,7 @@ unsigned long runpv_mmu_ptep_set_wrprotect(
 			if (!is_writable_pte(old_spte) &&
 			    !is_mmu_writable_spte(old_spte))
 				break;
-			new_spte = old_spte & ~(u64)PT_WRITABLE_MASK
-					     & ~shadow_mmu_writable_mask;
+			new_spte = old_spte & ~(u64)PT_WRITABLE_MASK;
 		} while (!try_cmpxchg64(sptep, &old_spte, new_spte));
 
 		sp_write_unlock(vcpu->kvm, sp);

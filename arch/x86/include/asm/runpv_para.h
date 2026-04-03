@@ -70,11 +70,11 @@ int runpv_pmdp_test_and_clear_young(struct vm_area_struct *vma,
 #define runpv_bug_stub(...) ({ BUG(); __builtin_unreachable(); })
 
 #define ptep_get runpv_ptep_get
-#define ptep_get_and_clear runpv_ptep_get_and_clear
-#define ptep_get_and_clear_full runpv_ptep_get_and_clear_full
-#define ptep_set_wrprotect runpv_ptep_set_wrprotect
-#define ptep_set_access_flags runpv_ptep_set_access_flags
-#define ptep_test_and_clear_young runpv_ptep_test_and_clear_young
+// #define ptep_get_and_clear runpv_ptep_get_and_clear
+// #define ptep_get_and_clear_full runpv_ptep_get_and_clear_full
+// #define ptep_set_wrprotect runpv_ptep_set_wrprotect
+// #define ptep_set_access_flags runpv_ptep_set_access_flags
+// #define ptep_test_and_clear_young runpv_ptep_test_and_clear_young
 
 void __init runpv_early_setup(unsigned long pgd);
 void __init runpv_init_direct_mapping_shadow(unsigned long start_pfn, unsigned long end_pfn);
