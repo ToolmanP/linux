@@ -2918,11 +2918,9 @@ int kvm_free_kpfn(const struct kvm_memory_slot *slot, gfn_t gfn, bool atomic, bo
     goto out;
   }
 
-  /* WARNING: This should decrement the count back to zero if correct */
-  /* It is subject to testing */
   page = pfn_to_page(elem->pfn);
   runpv_debugln("gfn=0x%llx kpfn=0x%llx refcount=%d", gfn, elem->pfn, page_ref_count(page));
-  __free_page(page);
+  put_page(page);
   elem->pfn = KVM_PFN_ERR_FAULT;
 
 out:

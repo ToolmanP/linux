@@ -12666,7 +12666,7 @@ static void memslot_kpfn_elems_free(struct kvm_memory_slot *slot)
   for (i = 0; i < slot->npages; ++i) {
     pfn = slot->arch.kpfn_elems[i].pfn;
     if(pfn != KVM_PFN_ERR_FAULT)
-      __free_page(pfn_to_page(pfn));
+      put_page(pfn_to_page(pfn));
   }
   kvfree(slot->arch.kpfn_elems);
 }
