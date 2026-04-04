@@ -263,10 +263,10 @@ pte_t runpv_ptep_get_and_clear_full(struct mm_struct *mm, unsigned long addr,
 		long ret = runpv_hypercall2_retry(RUNPV_HC_MMU_PTEP_GET_AND_CLEAR, (long)__pa(ptep), 1);
 		if (IS_ERR_VALUE(ret)) {
 			pte = native_local_ptep_get_and_clear(ptep);
-			page_table_check_pte_clear(mm, pte);
 		} else {
 			pte = native_make_pte(ret);
 		}
+		page_table_check_pte_clear(mm, pte);
 	} else {
 		pte = runpv_ptep_get_and_clear(mm, addr, ptep);
 	}
@@ -295,31 +295,29 @@ int runpv_ptep_set_access_flags(struct vm_area_struct *vma,
 				unsigned long address, pte_t *ptep,
 				pte_t entry, int dirty)
 {
-	long ret = runpv_hypercall3_retry(RUNPV_HC_MMU_PTEP_SET_ACCESS_FLAGS, (long)__pa(ptep), (long)entry.pte, dirty);
-	if (IS_ERR_VALUE(ret)) {
-		int changed = !pte_same(*ptep, entry);
-	
-		if (changed && dirty)
-			set_pte(ptep, entry);
-	
-		return changed;
-	}
-	return (int)ret;
+	int changed = (runpv_ptep_get(ptep).pte != entry.pte);
+
+	if (changed && dirty)
+		set_pte(ptep, entry);
+
+	return changed;
 }
 EXPORT_SYMBOL_GPL(runpv_ptep_set_access_flags);
 
 int runpv_ptep_test_and_clear_young(struct vm_area_struct *vma,
 				    unsigned long addr, pte_t *ptep)
 {
-	BUG();
-	return (int)runpv_hypercall1_retry(RUNPV_HC_MMU_PTEP_TEST_AND_CLEAR_YOUNG, (long)__pa(ptep));
-	int rc = 0;
-
-	if (pte_young(*ptep))
-		rc = test_and_clear_bit(_PAGE_BIT_ACCESSED,
-					(unsigned long *)&ptep->pte);
-
-	return rc;
+	long ret = runpv_hypercall1_retry(RUNPV_HC_MMU_PTEP_TEST_AND_CLEAR_YOUNG, (long)__pa(ptep));
+	if (IS_ERR_VALUE(ret)) {
+		int rc = 0;
+	
+		if (pte_young(*ptep))
+			rc = test_and_clear_bit(_PAGE_BIT_ACCESSED,
+						(unsigned long *)&ptep->pte);
+	
+		return rc;
+	}
+	return (int)ret;
 }
 EXPORT_SYMBOL_GPL(runpv_ptep_test_and_clear_young);
 

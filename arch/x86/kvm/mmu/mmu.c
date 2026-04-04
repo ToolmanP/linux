@@ -4485,170 +4485,116 @@ unsigned long runpv_mmu_entry_get(
 	return gbits | sbits;
 }
 
-unsigned long runpv_mmu_ptep_get_and_clear(
+long runpv_mmu_ptep_get_and_clear(
 	struct kvm_vcpu *vcpu, gpa_t ptep_pa,
-  bool local)
+	bool local)
 {
 	union kvm_mmu_page_role role;
 	struct kvm_mmu_page *sp;
 	u64 *sptep, *gptep;
 	u64 gpte, old_spte;
 	int rcu_idx;
+	long ret;
 
-  role = vcpu->arch.mmu->root_role;
+	role = vcpu->arch.mmu->root_role;
 	role.level    = PVM_SET_PTE_PTE;
 	role.quadrant = 0;
 
-  old_spte = 0;
+	old_spte = 0;
 	gptep = runpv_gpa_to_va(vcpu, ptep_pa);
 	if (!gptep)
-		return (unsigned long)-EFAULT;
+		return (long)-EFAULT;
 
-  gpte = READ_ONCE(*gptep);
 	if (!read_trylock(&vcpu->kvm->mmu_invalidate_seq_lock))
-		return (unsigned long)-EAGAIN;
+		return (long)-EAGAIN;
 
 	rcu_idx = srcu_read_lock(&vcpu->kvm->arch.mmu_srcu);
 
-	sp= runpv_mmu_get_sptep(vcpu, role, ptep_pa, &sptep);
-	if (!IS_ERR(sp)) {
-		if (is_shadow_present_pte(*sptep)) {
-			if (local) {
-				old_spte = *sptep;
-				WRITE_ONCE(*sptep, 0);
-			} else {
-				old_spte = xchg(sptep, 0);
-			}
-			rmap_remove(vcpu->kvm, sptep);
-		}
-		sp_write_unlock(vcpu->kvm, sp);
+	sp = runpv_mmu_get_sptep(vcpu, role, ptep_pa, &sptep);
+	if (IS_ERR(sp)) {
+		ret = PTR_ERR(sp);
+		goto out_unlock;
 	}
 
+	if (is_shadow_present_pte(*sptep)) {
+		old_spte = mmu_spte_clear_track_bits(vcpu->kvm, sptep);
+		if (is_shadow_present_pte(old_spte))
+			rmap_remove(vcpu->kvm, sptep);
+	}
+	gpte = READ_ONCE(*gptep);
 	WRITE_ONCE(*gptep, 0);
+	ret = runpv_compose_pte(gpte, old_spte);
 
+	sp_write_unlock(vcpu->kvm, sp);
+
+out_unlock:
 	srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
 	read_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
 
-
-	return runpv_compose_pte(gpte, old_spte);
+	return ret;
 }
 
-unsigned long runpv_mmu_ptep_set_wrprotect(
+long runpv_mmu_ptep_set_wrprotect(
 	struct kvm_vcpu *vcpu, gva_t ptep_pa
 )
 {
 	union kvm_mmu_page_role role;
 	struct kvm_mmu_page *sp;
 	u64 *sptep, *gptep;
-  u64 old_spte, new_spte;
+	u64 old_spte, new_spte;
 	int rcu_idx;
+	long ret;
 
-  role = vcpu->arch.mmu->root_role;
+	role = vcpu->arch.mmu->root_role;
 	role.level    = PVM_SET_PTE_PTE;
 	role.quadrant = 0;
 
 	gptep = runpv_gpa_to_va(vcpu, ptep_pa);
 	if (!gptep)
-		return (unsigned long)-EFAULT;
+		return (long)-EFAULT;
 
 	if (!read_trylock(&vcpu->kvm->mmu_invalidate_seq_lock))
-		return (unsigned long)-EAGAIN;
+		return (long)-EAGAIN;
 
 	rcu_idx = srcu_read_lock(&vcpu->kvm->arch.mmu_srcu);
 
 	sp = runpv_mmu_get_sptep(vcpu, role, ptep_pa, &sptep);
-
-	if (!IS_ERR(sp)) {
-		do {
-			old_spte = READ_ONCE(*sptep);
-			if (!is_writable_pte(old_spte) &&
-			    !is_mmu_writable_spte(old_spte))
-				break;
-			new_spte = old_spte & ~(u64)PT_WRITABLE_MASK;
-		} while (!try_cmpxchg64(sptep, &old_spte, new_spte));
-
-		sp_write_unlock(vcpu->kvm, sp);
-	}
-
-	srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
-	read_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
-
-	WRITE_ONCE(*gptep, READ_ONCE(*gptep) & ~(unsigned long)_PAGE_RW);
-
-	return 0;
-}
-
-unsigned long runpv_mmu_ptep_set_access_flags(
-    struct kvm_vcpu *vcpu, gpa_t ptep_pa,
-    u64 entry, bool dirty)
-{
-	union kvm_mmu_page_role role;
-	struct kvm_mmu_page *sp;
-	u64 *sptep, *gptep;
-	u64 spte, gpte, old_spte, new_spte;
-  u64 ad_bits;
-	int rcu_idx;
-	int changed;
-
-  role = vcpu->arch.mmu->root_role;
-	role.level    = PVM_SET_PTE_PTE;
-	role.quadrant = 0;
-
-	gptep = runpv_gpa_to_va(vcpu, ptep_pa);
-	if (!gptep)
-		return (unsigned long)-EFAULT;
-
-	if (!read_trylock(&vcpu->kvm->mmu_invalidate_seq_lock))
-		return (unsigned long)-EAGAIN;
-
-	rcu_idx = srcu_read_lock(&vcpu->kvm->arch.mmu_srcu);
-
-	gpte = READ_ONCE(*gptep);
-	sp = runpv_mmu_get_sptep(vcpu, role, ptep_pa, &sptep);
-
 	if (IS_ERR(sp)) {
-		srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
-		read_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
-		return PTR_ERR(sp);
+		ret = PTR_ERR(sp);
+		goto out_unlock;
 	}
 
-	spte = READ_ONCE(*sptep);
-	changed = (runpv_compose_pte(gpte, spte) != entry);
+	do {
+		old_spte = READ_ONCE(*sptep);
+		if (!is_writable_pte(old_spte) &&
+			!is_mmu_writable_spte(old_spte))
+			break;
+		new_spte = old_spte & ~(u64)PT_WRITABLE_MASK;
+	} while (!try_cmpxchg64(sptep, &old_spte, new_spte));
+	WRITE_ONCE(*gptep, READ_ONCE(*gptep) & ~(unsigned long)_PAGE_RW);
+	ret = 0;
 
-	if (changed && dirty) {
-		if (!IS_ERR(sp)) {
-			ad_bits = entry & (_PAGE_ACCESSED | _PAGE_DIRTY);
-			do {
-				old_spte = READ_ONCE(*sptep);
-				new_spte = old_spte | ad_bits;
-				if (old_spte == new_spte)
-					break;
-			} while (!try_cmpxchg64(sptep, &old_spte, new_spte));
-		}
-		WRITE_ONCE(*gptep, entry);
-	}
+	sp_write_unlock(vcpu->kvm, sp);
 
-	if (!IS_ERR(sp))
-		sp_write_unlock(vcpu->kvm, sp);
-
+out_unlock:
 	srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
 	read_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
 
-	return changed;
+	return ret;
 }
 
-unsigned long runpv_mmu_ptep_test_and_clear_young(
+long runpv_mmu_ptep_test_and_clear_young(
 	struct kvm_vcpu *vcpu,
 	gpa_t ptep_pa
 ) {
 	union kvm_mmu_page_role role;
 	struct kvm_mmu_page *sp;
 	u64 *sptep, *gptep;
-  u64 gpte, spte, old_spte, new_spte;
-  unsigned long ret;
+	u64 gpte, old_spte, new_spte;
+	unsigned long ret;
 	int rcu_idx;
 
-  role = vcpu->arch.mmu->root_role;
+	role = vcpu->arch.mmu->root_role;
 	role.level    = PVM_SET_PTE_PTE;
 	role.quadrant = 0;
 
@@ -4661,18 +4607,17 @@ unsigned long runpv_mmu_ptep_test_and_clear_young(
 		return (unsigned long)-EAGAIN;
 
 	rcu_idx = srcu_read_lock(&vcpu->kvm->arch.mmu_srcu);
+	sp = runpv_mmu_get_sptep(vcpu, role, ptep_pa, &sptep);
+
+	gpte = READ_ONCE(*gptep);
+	if (IS_ERR(sp)) {
+		ret = PTR_ERR(sp);
+		goto out_unlock;
+	}
 
 	ret = 0;
-	gpte = READ_ONCE(*gptep);
-	sp = runpv_mmu_get_sptep(vcpu, role, ptep_pa, &sptep);
-	if (IS_ERR(sp)) {
-		srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
-		read_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
-		return PTR_ERR(sp);
-	}
-	spte = READ_ONCE(*sptep);
-
-	if (runpv_compose_pte(gpte, spte) & _PAGE_ACCESSED) {
+	old_spte = READ_ONCE(*sptep);
+	if (runpv_compose_pte(gpte, old_spte) & _PAGE_ACCESSED) {
 		do {
 			old_spte = READ_ONCE(*sptep);
 			new_spte = old_spte & ~(u64)_PAGE_ACCESSED;
@@ -4685,6 +4630,7 @@ unsigned long runpv_mmu_ptep_test_and_clear_young(
 
 	sp_write_unlock(vcpu->kvm, sp);
 
+out_unlock:
 	srcu_read_unlock(&vcpu->kvm->arch.mmu_srcu, rcu_idx);
 	read_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
 
@@ -4711,7 +4657,7 @@ long runpv_mmu_op(struct kvm_vcpu *vcpu, long nr, long a0, long a1, long a2, lon
 	case RUNPV_HC_MMU_PTEP_SET_WRPROTECT:
 		return runpv_mmu_ptep_set_wrprotect(vcpu, a0);
 	case RUNPV_HC_MMU_PTEP_SET_ACCESS_FLAGS:
-		return runpv_mmu_ptep_set_access_flags(vcpu, a0, a1, a2);
+		BUG();
 	case RUNPV_HC_MMU_PTEP_TEST_AND_CLEAR_YOUNG:
 		return runpv_mmu_ptep_test_and_clear_young(vcpu, a0);
 	case RUNPV_HC_MMU_PMDP_GET_AND_CLEAR:
