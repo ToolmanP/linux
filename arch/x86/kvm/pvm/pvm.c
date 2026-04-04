@@ -2387,7 +2387,9 @@ static inline unsigned int __alloc_from_buddy(struct kvm_vcpu *vcpu, unsigned lo
 {
 	int i, j;
 	unsigned int page_count = 0;
-  gfn_t gfn;
+	gfn_t gfn;
+
+	runpv_mark_kpfns(vcpu, gfns, orders, nr_pages);
 
 	for (i = 0; i < nr_pages; i++) {
 		page_count += (1 << orders[i]);
@@ -2422,13 +2424,10 @@ static inline unsigned int __free_to_buddy(struct kvm_vcpu *vcpu, unsigned long 
 	unsigned long i;
 	unsigned int page_count = 0;
 
+	runpv_free_kpfns(vcpu, gfns, orders, nr_pages);
+
 	for (i = 0; i < nr_pages; i++) {
 		page_count += (1 << orders[i]);
-		unsigned long gfn = gfns[i];
-		unsigned long hva = kvm_vcpu_gfn_to_hva(vcpu, gfn);
-		BUG_ON(kvm_is_error_hva(hva));
-		int r = do_madvise(vcpu->kvm->mm, hva, PAGE_SIZE << orders[i], MADV_DONTNEED);
-		WARN_ON_ONCE(r < 0);
 	}
 	return page_count;
 }
