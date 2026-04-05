@@ -12722,6 +12722,7 @@ int memslot_kpfn_elems_alloc(struct kvm_memory_slot *slot, unsigned long npages)
   for(i = 0; i < npages; i++) {
     slot->arch.kpfn_elems[i].pfn = KVM_PFN_ERR_FAULT;
     slot->arch.kpfn_elems[i].direct_map_sptep = NULL;
+    slot->arch.kpfn_elems[i].hva_mapped = false;
     spin_lock_init(&slot->arch.kpfn_elems[i].lock);
   }
 

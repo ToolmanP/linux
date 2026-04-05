@@ -1225,6 +1225,7 @@ retry:
 			}
 
 			get_page(page);
+			elem->hva_mapped = true;
 			spin_unlock_irqrestore(&elem->lock, flags);
 			goto out_unlock;
 		}
@@ -2536,12 +2537,13 @@ static unsigned long __gfn_to_hva_many(const struct kvm_memory_slot *slot, gfn_t
 static unsigned long gfn_to_hva_many(struct kvm_memory_slot *slot, gfn_t gfn,
 				     gfn_t *nr_pages)
 {
-  unsigned long hva;
-  if(kvm_kpfn_ready_memslot(slot, gfn))
-    __gfn_to_kpfn_memslot(slot, gfn, true, false, true, NULL, &hva);
-  else
-	  hva = __gfn_to_hva_many(slot, gfn, nr_pages, true);
-  return hva;
+	unsigned long hva;
+
+	if (kvm_kpfn_ready_memslot(slot, gfn)) {
+		__gfn_to_kpfn_memslot(slot, gfn, true, false, true, NULL, &hva);
+		return hva;
+	}
+	return __gfn_to_hva_many(slot, gfn, nr_pages, true);
 }
 
 unsigned long gfn_to_hva_memslot(struct kvm_memory_slot *slot,
@@ -2574,12 +2576,15 @@ EXPORT_SYMBOL_GPL(kvm_vcpu_gfn_to_hva);
 unsigned long gfn_to_hva_memslot_prot(struct kvm_memory_slot *slot,
 				      gfn_t gfn, bool *writable)
 {
-	unsigned long hva = -1;
-  if(kvm_kpfn_ready_memslot(slot, gfn)) {
-    __gfn_to_kpfn_memslot(slot, gfn, true, false, true, writable, &hva);
-    return hva;
-  }
-  hva = __gfn_to_hva_many(slot, gfn, NULL, false);
+	unsigned long hva;
+
+	if (kvm_kpfn_ready_memslot(slot, gfn)) {
+		__gfn_to_kpfn_memslot(slot, gfn, true, false, true,
+				      writable, &hva);
+		return hva;
+	}
+
+	hva = __gfn_to_hva_many(slot, gfn, NULL, false);
 
 	if (!kvm_is_error_hva(hva) && writable)
 		*writable = !memslot_is_readonly(slot);
@@ -2922,6 +2927,7 @@ int kvm_free_kpfn(const struct kvm_memory_slot *slot, gfn_t gfn, bool atomic, bo
   runpv_debugln("gfn=0x%llx kpfn=0x%llx refcount=%d", gfn, elem->pfn, page_ref_count(page));
   put_page(page);
   elem->pfn = KVM_PFN_ERR_FAULT;
+  elem->hva_mapped = false;
 
 out:
   if(atomic) 
@@ -2937,7 +2943,13 @@ kvm_pfn_t __gfn_to_pfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn,
 			       bool atomic, bool interruptible, bool *async,
 			       bool write_fault, bool *writable, hva_t *hva)
 {
-	unsigned long addr = __gfn_to_hva_many(slot, gfn, NULL, write_fault);
+	unsigned long addr;
+
+	if (kvm_kpfn_ready_memslot(slot, gfn))
+		return __gfn_to_kpfn_memslot(slot, gfn, atomic, interruptible,
+					     write_fault, writable, hva);
+
+	addr = __gfn_to_hva_many(slot, gfn, NULL, write_fault);
 
 	if (hva)
 		*hva = addr;
@@ -2947,9 +2959,6 @@ kvm_pfn_t __gfn_to_pfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn,
 			*writable = false;
 		return KVM_PFN_ERR_RO_FAULT;
 	}
-
-  if(kvm_kpfn_ready_memslot(slot, gfn)) 
-    return __gfn_to_kpfn_memslot(slot, gfn, atomic, interruptible, write_fault, writable, hva);
 
 	if (kvm_is_error_hva(addr)) {
 		if (writable)

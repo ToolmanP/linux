@@ -34,6 +34,7 @@
 #include <linux/types.h>
 #include <linux/string.h>
 #include <linux/mm.h>
+#include <linux/mman.h>
 #include <linux/highmem.h>
 #include <linux/moduleparam.h>
 #include <linux/export.h>
@@ -2090,6 +2091,27 @@ bool kvm_unmap_gfn_range(struct kvm *kvm, struct kvm_gfn_range *range)
 	if (kvm_x86_ops.set_apic_access_page_addr &&
 	    range->slot->id == APIC_ACCESS_PAGE_PRIVATE_MEMSLOT)
 		kvm_make_all_cpus_request(kvm, KVM_REQ_APIC_PAGE_RELOAD);
+
+	/*
+	 * When HVA is invalidated (e.g., MADV_DONTNEED, munmap), free the
+	 * corresponding kpfn entries for pages that were faulted into
+	 * userspace. The kva array is the ground truth; clearing it here
+	 * ensures consistency between HVA and kva.
+	 */
+	if (range->slot->arch.kpfn_elems) {
+		gfn_t gfn;
+
+		for (gfn = range->start; gfn < range->end; gfn++) {
+			struct kvm_kpfn_element *elem;
+			unsigned long idx = gfn - range->slot->base_gfn;
+
+			if (idx >= range->slot->npages)
+				continue;
+			elem = &range->slot->arch.kpfn_elems[idx];
+			if (elem->pfn != KVM_PFN_ERR_FAULT && elem->hva_mapped)
+				kvm_free_kpfn(range->slot, gfn, false, false);
+		}
+	}
 
 	return flush;
 }
@@ -6711,9 +6733,11 @@ int runpv_faultin_direct_mapping_fast(struct kvm_vcpu *vcpu,
 	struct kvm *kvm = vcpu->kvm;
 	struct kvm_memory_slot *slot;
 	struct kvm_kpfn_element *elem;
-  struct kvm_mmu_page *sp;
+	struct kvm_mmu_page *sp;
+	struct page *page;
 	u64 *sptep;
-  int r;
+	unsigned long flags;
+	int r;
 
 	struct kvm_page_fault fault = {
 		.addr = (gfn << PAGE_SHIFT) + kvm->page_offset_base,
@@ -6729,12 +6753,8 @@ int runpv_faultin_direct_mapping_fast(struct kvm_vcpu *vcpu,
 		.is_tdp = false,
 		.nx_huge_page_workaround_enabled =
 			is_nx_huge_page_enabled(kvm),
-    .mmu_seq = vcpu->kvm->mmu_invalidate_seq,
+		.mmu_seq = vcpu->kvm->mmu_invalidate_seq,
 	};
-
-  fault.pfn = gfn_to_pfn(vcpu->kvm, gfn);
-  BUG_ON(is_error_noslot_pfn(fault.pfn));
-  kvm_release_pfn_clean(fault.pfn);
 
 	r = RET_PF_RETRY;
 
@@ -6742,22 +6762,40 @@ int runpv_faultin_direct_mapping_fast(struct kvm_vcpu *vcpu,
 		return -EFAULT;
 
 	elem = &slot->arch.kpfn_elems[gfn - slot->base_gfn];
-	sptep = elem->direct_map_sptep;
 
+	spin_lock_irqsave(&elem->lock, flags);
+	if (elem->pfn == KVM_PFN_ERR_FAULT) {
+		spin_unlock_irqrestore(&elem->lock, flags);
+		page = alloc_page(GFP_KERNEL);
+		if (!page)
+			return -ENOMEM;
+		spin_lock_irqsave(&elem->lock, flags);
+		if (elem->pfn == KVM_PFN_ERR_FAULT) {
+			elem->pfn = page_to_pfn(page);
+		} else {
+			spin_unlock_irqrestore(&elem->lock, flags);
+			__free_page(page);
+			spin_lock_irqsave(&elem->lock, flags);
+		}
+	}
+	fault.pfn = elem->pfn;
+	spin_unlock_irqrestore(&elem->lock, flags);
+
+	sptep = elem->direct_map_sptep;
 	BUG_ON(!sptep);
 	fault.slot = slot;
 	fault.hva = __gfn_to_hva_memslot(slot, gfn);
 	read_lock(&kvm->mmu_invalidate_seq_lock);
 
-  if(is_page_fault_stale(vcpu, &fault)) {
-    r = RET_PF_RETRY;
-    goto out_unlock;
-  }
+	if (is_page_fault_stale(vcpu, &fault)) {
+		r = RET_PF_RETRY;
+		goto out_unlock;
+	}
 
-  sp = sptep_to_sp(sptep);
-  sp_write_lock(kvm, sp);
+	sp = sptep_to_sp(sptep);
+	sp_write_lock(kvm, sp);
 	r = mmu_set_spte(vcpu, slot, sptep, ACC_ALL, gfn, fault.pfn, &fault);
-  sp_write_unlock(kvm, sp);
+	sp_write_unlock(kvm, sp);
 
 out_unlock:
 	read_unlock(&kvm->mmu_invalidate_seq_lock);
@@ -9016,22 +9054,44 @@ EXPORT_SYMBOL_GPL(runpv_mark_kpfns);
 
 void runpv_free_kpfn(struct kvm_vcpu *vcpu, gfn_t gfn, int order)
 {
-  struct kvm_memory_slot *slot;
-  int i, npages;
-  gfn_t gfn_start, gfn_end;
-  struct kvm *kvm;
-  slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
-  npages = 1 << order;
-  gfn_end = gfn + npages;
-  gfn_start = gfn;
-  kvm = vcpu->kvm;
-  runpv_debugln("kpfn_free gfn=0x%llx, order=%d\n", gfn, order);
-  write_lock(&vcpu->kvm->mmu_invalidate_seq_lock);
-  __kvm_vcpu_zap_gfn_range(vcpu, gfn_start, gfn_end);
-  for(i = 0; i < npages; i++) 
-    kvm_free_kpfn(slot, gfn + i, false, false);
-  write_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
+	struct kvm_memory_slot *slot;
+	struct kvm_kpfn_element *elem;
+	int i, npages;
+	gfn_t gfn_start, gfn_end;
+	struct kvm *kvm = vcpu->kvm;
+	bool has_slow = false;
 
+	slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
+	npages = 1 << order;
+	gfn_end = gfn + npages;
+	gfn_start = gfn;
+	runpv_debugln("kpfn_free gfn=0x%llx, order=%d\n", gfn, order);
+
+	/* Fast path: zap SPTEs and free non-hva_mapped kpfns under lock */
+	write_lock(&kvm->mmu_invalidate_seq_lock);
+	__kvm_vcpu_zap_gfn_range(vcpu, gfn_start, gfn_end);
+	for (i = 0; i < npages; i++) {
+		elem = &slot->arch.kpfn_elems[gfn + i - slot->base_gfn];
+		if (elem->hva_mapped) {
+			has_slow = true;
+			continue;
+		}
+		kvm_free_kpfn(slot, gfn + i, false, false);
+	}
+	write_unlock(&kvm->mmu_invalidate_seq_lock);
+
+	/* Slow path: do_madvise for hva_mapped pages (outside lock).
+	 * This triggers mmu_notifier → kvm_unmap_gfn_range → kpfn freed there.
+	 */
+	if (has_slow) {
+		for (i = 0; i < npages; i++) {
+			elem = &slot->arch.kpfn_elems[gfn + i - slot->base_gfn];
+			if (elem->hva_mapped) {
+				unsigned long hva = __gfn_to_hva_memslot(slot, gfn + i);
+				do_madvise(kvm->mm, hva, PAGE_SIZE, MADV_DONTNEED);
+			}
+		}
+	}
 }
 
 EXPORT_SYMBOL_GPL(runpv_free_kpfn);
@@ -9039,20 +9099,20 @@ EXPORT_SYMBOL_GPL(runpv_free_kpfn);
 void runpv_free_kpfns(struct kvm_vcpu *vcpu, unsigned long *gfns, int *orders, int nr_pages)
 {
 	struct kvm_memory_slot *slot;
+	struct kvm_kpfn_element *elem;
 	int i, npages, idx;
-	gfn_t gfn_start, gfn_end;
 	gfn_t gfn;
 	int order;
 	struct kvm *kvm = vcpu->kvm;
+	bool has_slow = false;
 
-	write_lock(&vcpu->kvm->mmu_invalidate_seq_lock);
+	/* Fast path: zap SPTEs and free non-hva_mapped kpfns under lock */
+	write_lock(&kvm->mmu_invalidate_seq_lock);
 	for (idx = 0; idx < nr_pages; idx++) {
 		gfn = gfns[idx];
 		order = orders[idx];
 		npages = 1 << order;
-		gfn_end = gfn + npages;
-		gfn_start = gfn;
-		kvm_rmap_zap_gfn_range(kvm, gfn_start, gfn_end);
+		kvm_rmap_zap_gfn_range(kvm, gfn, gfn + npages);
 	}
 	kvm_mmu_invalidate_begin(kvm, 0, -1ul);
 	kvm_flush_remote_tlbs(kvm);
@@ -9062,9 +9122,34 @@ void runpv_free_kpfns(struct kvm_vcpu *vcpu, unsigned long *gfns, int *orders, i
 		order = orders[idx];
 		npages = 1 << order;
 		slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
-		for(i = 0; i < npages; i++) 
+		for (i = 0; i < npages; i++) {
+			elem = &slot->arch.kpfn_elems[gfn + i - slot->base_gfn];
+			if (elem->hva_mapped) {
+				has_slow = true;
+				continue;
+			}
 			kvm_free_kpfn(slot, gfn + i, false, false);
+		}
 	}
-	write_unlock(&vcpu->kvm->mmu_invalidate_seq_lock);
+	write_unlock(&kvm->mmu_invalidate_seq_lock);
+
+	/* Slow path: do_madvise for hva_mapped pages (outside lock).
+	 * This triggers mmu_notifier → kvm_unmap_gfn_range → kpfn freed there.
+	 */
+	if (has_slow) {
+		for (idx = 0; idx < nr_pages; idx++) {
+			gfn = gfns[idx];
+			order = orders[idx];
+			npages = 1 << order;
+			slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
+			for (i = 0; i < npages; i++) {
+				elem = &slot->arch.kpfn_elems[gfn + i - slot->base_gfn];
+				if (elem->hva_mapped) {
+					unsigned long hva = __gfn_to_hva_memslot(slot, gfn + i);
+					do_madvise(kvm->mm, hva, PAGE_SIZE, MADV_DONTNEED);
+				}
+			}
+		}
+	}
 }
 EXPORT_SYMBOL_GPL(runpv_free_kpfns);
