@@ -1609,6 +1609,7 @@ static void pvm_deliver_interrupt(struct kvm_lapic *apic, int delivery_mode,
 {
 	struct kvm_vcpu *vcpu = apic->vcpu;
 
+	trace_kvm_pvm_deliver_interrupt(vcpu->task->pid, vcpu->vcpu_id, (__u32)vector);
 	kvm_lapic_set_irr(vector, apic);
 	kvm_make_request(KVM_REQ_EVENT, vcpu);
 	kvm_vcpu_kick(vcpu);
@@ -1908,6 +1909,7 @@ static void pvm_inject_irq(struct kvm_vcpu *vcpu, bool reinjected)
 	int irq = vcpu->arch.interrupt.nr;
 
 	trace_kvm_inj_virq(irq, vcpu->arch.interrupt.soft, false);
+  trace_kvm_pvm_inject_irq(vcpu->task->pid, vcpu->vcpu_id, (__u32)irq);
 
 	to_pvm(vcpu)->switch_flags &= ~SWITCH_FLAGS_IRQ_WIN;
 
@@ -2034,6 +2036,29 @@ static int handle_hc_irq_halt(struct kvm_vcpu *vcpu)
 	kvm_set_rflags(vcpu, kvm_get_rflags(vcpu) | X86_EFLAGS_IF);
 
 	return kvm_emulate_halt_noskip(vcpu);
+}
+
+static int handle_hc_prio_irq(struct kvm_vcpu *vcpu, gva_t buf, int count) {
+
+  struct kvm_pvm *pvm;
+  int irqs[NR_MAX_PVM_PRIO_IRQS];
+  struct x86_exception e;
+
+  pvm = to_kvm_pvm(vcpu->kvm);
+  kvm_read_guest_virt(vcpu, buf, irqs, count * sizeof(int), &e);
+
+  for(int i = 0; i < count; i++)  {
+    pr_info("%s: read prio irq %d: %d\n", __func__, irqs[i], i);
+  }
+
+  spin_lock(&pvm->irq_ctrl.lock);
+  for(int i = 0; i < count && pvm->irq_ctrl.count < NR_MAX_PVM_PRIO_IRQS; i++, pvm->irq_ctrl.count++)  {
+    pr_info("%s: add prio irq %d: %d\n", __func__, irqs[i], pvm->irq_ctrl.count);
+    pvm->irq_ctrl.irqs[pvm->irq_ctrl.count]= irqs[i];
+  }
+  spin_unlock(&pvm->irq_ctrl.lock);
+  kvm_rax_write(vcpu, 0);
+  return 1;
 }
 
 static void pvm_flush_tlb_guest_current_kernel_user(struct kvm_vcpu *vcpu)
@@ -2548,6 +2573,8 @@ static int handle_exit_syscall(struct kvm_vcpu *vcpu)
 		return handle_hc_release_pte(vcpu, a0, a1);
 	case PVM_HC_INIT_DIRECT_MAPPING_SHADOW:
 		return handle_hc_init_direct_mapping_shadow(vcpu, a0, a1);
+  case PVM_HC_PRIO_IRQ:
+    return handle_hc_prio_irq(vcpu, a0, a1);
 	default:
 		return handle_kvm_hypercall(vcpu);
 	}
@@ -3473,6 +3500,8 @@ static void pvm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
 
 static int pvm_vm_init(struct kvm *kvm)
 {
+  struct kvm_pvm *pvm = to_kvm_pvm(kvm);
+
 	kvm->arch.host_mmu_root_pgd = host_mmu_root_pgd;
 	kvm->page_buffer_base = (unsigned long)kvmalloc(sizeof(struct runpv_page_buffer), GFP_KERNEL | __GFP_ZERO);
 	if (!kvm->page_buffer_base)
@@ -3510,6 +3539,11 @@ static int pvm_vm_init(struct kvm *kvm)
 		kvm->gpt2spt_base = (unsigned long)gpt2spt;
 	}
   init_srcu_struct(&kvm->arch.mmu_srcu);
+  for(int i = 0; i < NR_MAX_PVM_PRIO_IRQS; i++)
+      pvm->irq_ctrl.irqs[i] = -1;
+
+  pvm->irq_ctrl.count = 0;
+  spin_lock_init(&pvm->irq_ctrl.lock);
 	return 0;
 }
 

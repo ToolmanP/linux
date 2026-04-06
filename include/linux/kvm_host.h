@@ -322,6 +322,7 @@ struct kvm_mmio_fragment {
 
 struct kvm_vcpu {
 	struct kvm *kvm;
+  struct task_struct *task;
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	struct preempt_notifier preempt_notifier;
 #endif

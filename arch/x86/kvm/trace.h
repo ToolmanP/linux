@@ -1836,6 +1836,50 @@ TRACE_EVENT(kvm_vmgexit_msr_protocol_exit,
 		  __entry->vcpu_id, __entry->ghcb_gpa, __entry->result)
 );
 
+/*
+ * PVM: interrupt delivery to the guest (before IRR / kick). For BPF, e.g.
+ * SEC("tp/kvm/kvm_pvm_deliver_interrupt") with pid, vcpu_id, vector.
+ */
+TRACE_EVENT(kvm_pvm_deliver_interrupt,
+	TP_PROTO(__u64 pid, __u32 vcpu_id, __u32 vector),
+	TP_ARGS(pid, vcpu_id, vector),
+
+	TP_STRUCT__entry(
+		__field(	__u64,	pid)
+		__field(	__u32,		vcpu_id		)
+		__field(	__u32,		vector		)
+	),
+
+	TP_fast_assign(
+		__entry->pid		= pid;
+		__entry->vcpu_id	= vcpu_id;
+		__entry->vector		= vector;
+	),
+
+	TP_printk("pid=%llu vcpu_id=%u vector=%u",
+		  __entry->pid, __entry->vcpu_id, __entry->vector)
+);
+
+TRACE_EVENT(kvm_pvm_inject_irq,
+	TP_PROTO(__u64 pid, __u32 vcpu_id, __u32 vector),
+	TP_ARGS(pid, vcpu_id, vector),
+
+	TP_STRUCT__entry(
+		__field(	__u64,	  pid       )
+		__field(	__u32,		vcpu_id		)
+		__field(	__u32,		vector		)
+	),
+
+	TP_fast_assign(
+		__entry->pid		= pid;
+		__entry->vcpu_id	= vcpu_id;
+		__entry->vector		= vector;
+	),
+
+	TP_printk("pid=%llu vcpu_id=%u vector=%u",
+		  __entry->pid, __entry->vcpu_id, __entry->vector)
+);
+
 #endif /* _TRACE_KVM_H */
 
 #undef TRACE_INCLUDE_PATH

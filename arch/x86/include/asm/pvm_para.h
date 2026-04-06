@@ -11,6 +11,7 @@ typedef void (*idtentry_t)(struct pt_regs *regs);
 #ifdef CONFIG_PVM_GUEST
 #include <asm/irqflags.h>
 #include <uapi/asm/kvm_para.h>
+#define NR_MAX_PVM_PRIO_IRQS	4
 
 void __init pvm_early_setup(void);
 void __init pvm_setup_early_traps(void);

@@ -2844,6 +2844,7 @@ DEFINE_SCHED_CLASS(ext) = {
 	.uclamp_enabled		= 0,
 #endif
 };
+EXPORT_SYMBOL(ext_sched_class);
 
 static void init_dsq(struct scx_dispatch_q *dsq, u64 dsq_id)
 {
@@ -4370,6 +4371,7 @@ s32 scx_bpf_create_dsq(u64 dsq_id, s32 node)
 		return -EINVAL;
 	return PTR_ERR_OR_ZERO(create_dsq(dsq_id, node));
 }
+EXPORT_SYMBOL(scx_bpf_create_dsq);
 
 BTF_SET8_START(scx_kfunc_ids_sleepable)
 BTF_ID_FLAGS(func, scx_bpf_create_dsq, KF_SLEEPABLE)
@@ -4475,6 +4477,7 @@ void scx_bpf_dispatch(struct task_struct *p, u64 dsq_id, u64 slice,
 
 	scx_dispatch_commit(p, dsq_id, enq_flags);
 }
+EXPORT_SYMBOL(scx_bpf_dispatch);
 
 /**
  * scx_bpf_dispatch_vtime - Dispatch a task into the vtime priority queue of a DSQ
@@ -4927,6 +4930,7 @@ void scx_bpf_destroy_dsq(u64 dsq_id)
 {
 	destroy_dsq(dsq_id);
 }
+EXPORT_SYMBOL(scx_bpf_destroy_dsq);
 
 /**
  * scx_bpf_task_running - Is task currently running?

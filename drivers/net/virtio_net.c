@@ -26,6 +26,14 @@
 #ifdef CONFIG_RUNPV_GUEST
 #include <asm/runpv_para.h>
 #endif
+#if IS_ENABLED(CONFIG_PCI)
+#include <linux/pci.h>
+#endif
+
+#ifdef CONFIG_PVM_GUEST
+#include <asm/pvm_para.h>
+#include <uapi/asm/pvm_para.h>
+#endif
 
 static int napi_weight = NAPI_POLL_WEIGHT;
 module_param(napi_weight, int, 0444);
@@ -4244,6 +4252,41 @@ err_ctrl:
 	return -ENOMEM;
 }
 
+#if IS_ENABLED(CONFIG_PCI) && IS_ENABLED(CONFIG_PVM_GUEST)
+static void virtnet_log_pci_irqs(struct virtio_device *vdev)
+{
+	struct pci_dev *pdev;
+	struct device *parent = vdev->dev.parent;
+  int irqs[NR_MAX_PVM_PRIO_IRQS];
+  int cur = 0;
+	int i, irq;
+
+	if (!parent || !dev_is_pci(parent))
+		return;
+
+	pdev = to_pci_dev(parent);
+
+	if (!pdev->msi_enabled && !pdev->msix_enabled) {
+		dev_info(&vdev->dev, "using INTx IRQ %u\n", pdev->irq);
+		return;
+	}
+
+	for (i = 0; cur < NR_MAX_PVM_PRIO_IRQS ; i++) {
+		irq = pci_irq_vector(pdev, i);
+		if (irq < 0)
+			break;
+		dev_info(&vdev->dev, "PCI vector %u -> IRQ %d\n", i, irq);
+    irqs[cur++] = irq;
+	}
+  pvm_hypercall2(PVM_HC_PRIO_IRQ, (unsigned long)&irqs, cur);
+}
+#else
+static void virtnet_log_pci_irqs(struct virtio_device *vdev)
+{
+	(void)vdev;
+}
+#endif
+
 static int init_vqs(struct virtnet_info *vi)
 {
 	int ret;
@@ -4576,6 +4619,8 @@ static int virtnet_probe(struct virtio_device *vdev)
 	err = init_vqs(vi);
 	if (err)
 		goto free;
+
+	virtnet_log_pci_irqs(vdev);
 
 	if (virtio_has_feature(vi->vdev, VIRTIO_NET_F_NOTF_COAL)) {
 		vi->intr_coal_rx.max_usecs = 0;

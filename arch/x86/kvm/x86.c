@@ -11101,6 +11101,7 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
 	int r;
 
 	vcpu->arch.l1tf_flush_l1d = true;
+  vcpu->task = current;
 
 	for (;;) {
 		/*
@@ -13898,6 +13899,8 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_avic_ga_log);
 EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_avic_kick_vcpu_slowpath);
 EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_avic_doorbell);
 EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_apicv_accept_irq);
+EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_pvm_deliver_interrupt);
+EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_pvm_inject_irq);
 EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_vmgexit_enter);
 EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_vmgexit_exit);
 EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_vmgexit_msr_protocol_enter);

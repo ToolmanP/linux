@@ -31,19 +31,43 @@ static u64 vtime_now;
 struct user_exit_info uei;
 
 #define SHARED_DSQ 0
+#define DEFAULT_VCPU_DSQ_ID 0xff
 
 struct {
-	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-	__uint(key_size, sizeof(u32));
-	__uint(value_size, sizeof(u64));
-	__uint(max_entries, 2);			/* [local, global] */
-} stats SEC(".maps");
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(key_size, sizeof(u64));		/* task pid */
+	__uint(value_size, sizeof(u32));	/* atomic bool (0 / 1) */
+	__uint(max_entries, 65536);
+} promote_map SEC(".maps");
 
-static void stat_inc(u32 idx)
+static __always_inline bool is_promo_irq(__u32 vector)
 {
-	u64 *cnt_p = bpf_map_lookup_elem(&stats, &idx);
-	if (cnt_p)
-		(*cnt_p)++;
+	return vector == 34 || vector == 35;
+}
+
+static __always_inline bool should_promote_task(struct task_struct *p)
+{
+	u64 key = p->pid;
+	u32 *promote = bpf_map_lookup_elem(&promote_map, &key);
+
+	if (!promote)
+		return false;
+
+	return __sync_fetch_and_add(promote, 0) != 0;
+}
+
+static __always_inline void set_promote_task_key(u64 key, bool promote)
+{
+	u32 init = promote ? 1 : 0;
+	u32 *val;
+
+	val = bpf_map_lookup_elem(&promote_map, &key);
+	if (val) {
+		__sync_lock_test_and_set(val, init);
+		return;
+	}
+
+	bpf_map_update_elem(&promote_map, &key, &init, BPF_ANY);
 }
 
 static inline bool vtime_before(u64 a, u64 b)
@@ -57,17 +81,16 @@ s32 BPF_STRUCT_OPS(simple_select_cpu, struct task_struct *p, s32 prev_cpu, u64 w
 	s32 cpu;
 
 	cpu = scx_bpf_select_cpu_dfl(p, prev_cpu, wake_flags, &is_idle);
-	if (is_idle) {
-		stat_inc(0);	/* count local queueing */
-		scx_bpf_dispatch(p, SCX_DSQ_LOCAL, SCX_SLICE_DFL, 0);
-	}
 
 	return cpu;
 }
 
 void BPF_STRUCT_OPS(simple_enqueue, struct task_struct *p, u64 enq_flags)
 {
-	stat_inc(1);	/* count global queueing */
+	if (should_promote_task(p)) {
+		scx_bpf_dispatch(p, DEFAULT_VCPU_DSQ_ID, SCX_SLICE_DFL, enq_flags);
+		return;
+	}
 
 	if (fifo_sched) {
 		scx_bpf_dispatch(p, SHARED_DSQ, SCX_SLICE_DFL, enq_flags);
@@ -86,9 +109,39 @@ void BPF_STRUCT_OPS(simple_enqueue, struct task_struct *p, u64 enq_flags)
 	}
 }
 
+SEC("tp_btf/kvm_pvm_deliver_interrupt")
+int BPF_PROG(simple_tp_pvm_deliver_interrupt, __u64 pid,
+	     __u32 vcpu_id, __u32 vector)
+{
+	u64 key = pid;
+
+	(void)vcpu_id;
+
+	if (is_promo_irq(vector)) 
+		set_promote_task_key(key, true);
+
+	return 0;
+}
+
+SEC("tp_btf/kvm_pvm_inject_irq")
+int BPF_PROG(simple_tp_pvm_inject_irq, __u64 pid,
+	     __u32 vcpu_id, __u32 vector)
+{
+	u64 key = pid;
+
+	(void)vcpu_id;
+
+	if (is_promo_irq(vector))
+		set_promote_task_key(key, false);
+
+	return 0;
+}
+
 void BPF_STRUCT_OPS(simple_dispatch, s32 cpu, struct task_struct *prev)
 {
-	scx_bpf_consume(SHARED_DSQ);
+  if(!scx_bpf_consume(DEFAULT_VCPU_DSQ_ID)) {
+    scx_bpf_consume(SHARED_DSQ);
+  }
 }
 
 void BPF_STRUCT_OPS(simple_running, struct task_struct *p)
@@ -120,7 +173,10 @@ void BPF_STRUCT_OPS(simple_stopping, struct task_struct *p, bool runnable)
 	 * too much, determine the execution time by taking explicit timestamps
 	 * instead of depending on @p->scx.slice.
 	 */
-	p->scx.dsq_vtime += (SCX_SLICE_DFL - p->scx.slice) * 100 / p->scx.weight;
+
+  if(p->scx.dsq->id != DEFAULT_VCPU_DSQ_ID)
+	  p->scx.dsq_vtime += (SCX_SLICE_DFL - p->scx.slice) * 100 / p->scx.weight;
+
 }
 
 void BPF_STRUCT_OPS(simple_enable, struct task_struct *p)
@@ -133,6 +189,7 @@ s32 BPF_STRUCT_OPS_SLEEPABLE(simple_init)
 	if (!switch_partial)
 		scx_bpf_switch_all();
 
+  scx_bpf_create_dsq(DEFAULT_VCPU_DSQ_ID, -1);
 	return scx_bpf_create_dsq(SHARED_DSQ, -1);
 }
 
@@ -140,6 +197,7 @@ void BPF_STRUCT_OPS(simple_exit, struct scx_exit_info *ei)
 {
 	uei_record(&uei, ei);
 }
+
 
 SEC(".struct_ops.link")
 struct sched_ext_ops simple_ops = {
