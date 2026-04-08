@@ -265,7 +265,7 @@ struct runpv_page_buffer {
 	unsigned long free_pfns[RUNPV_PAGE_BUFFER_PAGE_NR];
 };
 
-#define RUNPV_BATCHED_PAGES_MAX_NR 2048
+#define RUNPV_BATCHED_PAGES_MAX_NR 65536
 struct page;
 struct runpv_batched_pages {
 	volatile int event;
