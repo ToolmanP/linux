@@ -2758,6 +2758,10 @@ static struct kvm_mmu_page *kvm_mmu_find_shadow_page_fast(struct kvm *kvm,
 {
 	struct kvm_mmu_page *sp;
 	int collisions = 0;
+  union kvm_mmu_page_role lhs, rhs;
+  lhs = role;
+  lhs.direct = 0;
+  lhs.access = 0;
 
 	for_each_valid_sp_rcu(kvm, sp, sp_list) {
 
@@ -2766,6 +2770,10 @@ static struct kvm_mmu_page *kvm_mmu_find_shadow_page_fast(struct kvm *kvm,
       sp_read_unlock(kvm, sp);
 			continue;
 		}
+
+    rhs = sp->role;
+    rhs.direct = 0;
+    rhs.access = 0;
 
     if(sp->role.word != role.word) {
       sp_read_unlock(kvm, sp);
@@ -2798,6 +2806,10 @@ static struct kvm_mmu_page *kvm_mmu_find_shadow_page_slow(struct kvm *kvm,
 {
 	struct kvm_mmu_page *sp;
 	int collisions = 0;
+  union kvm_mmu_page_role lhs, rhs;
+  lhs = role;
+  lhs.direct = 0;
+  lhs.access = 0;
 
 	for_each_valid_sp(kvm, sp, sp_list) {
 		if (sp->gfn != gfn) {
@@ -2805,6 +2817,10 @@ static struct kvm_mmu_page *kvm_mmu_find_shadow_page_slow(struct kvm *kvm,
       sp_read_unlock(kvm, sp);
 			continue;
 		}
+
+    rhs = sp->role;
+    rhs.direct = 0;
+    rhs.access = 0;
 
     if(sp->role.word != role.word) {
       sp_read_unlock(kvm, sp);
@@ -2947,8 +2963,10 @@ kvm_mmu_find_shadow_page_atomic(struct kvm_vcpu *vcpu, gfn_t gfn, union kvm_mmu_
 
 		union kvm_mmu_page_role sp_role = sp->role;
 		sp_role.access = 0;
+    sp_role.direct = 0;
 		union kvm_mmu_page_role my_role = role;
 		my_role.access = 0;
+    my_role.direct = 0;
 
 		if (sp_role.word != my_role.word) {
       sp_read_unlock(kvm, sp);
@@ -4322,6 +4340,7 @@ retry:
 	*sptep = sp->spt + spte_index((u64 *)ptep_pa);
 	return sp;
 }
+
 
 /*
  * Derive the effective access bits for a shadow PTE by narrowing the parent
