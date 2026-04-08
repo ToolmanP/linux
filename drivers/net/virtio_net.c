@@ -4253,12 +4253,14 @@ err_ctrl:
 }
 
 #if IS_ENABLED(CONFIG_PCI) && IS_ENABLED(CONFIG_PVM_GUEST)
+#include <linux/msi.h>
+
 static void virtnet_log_pci_irqs(struct virtio_device *vdev)
 {
 	struct pci_dev *pdev;
 	struct device *parent = vdev->dev.parent;
-  int irqs[NR_MAX_PVM_PRIO_IRQS];
-  int cur = 0;
+  struct irq_cfg *cfg;
+	int cur = 0;
 	int i, irq;
 
 	if (!parent || !dev_is_pci(parent))
@@ -4267,18 +4269,17 @@ static void virtnet_log_pci_irqs(struct virtio_device *vdev)
 	pdev = to_pci_dev(parent);
 
 	if (!pdev->msi_enabled && !pdev->msix_enabled) {
-		dev_info(&vdev->dev, "using INTx IRQ %u\n", pdev->irq);
+		dev_info(&vdev->dev, "virtio-net using INTx IRQ %u\n", pdev->irq);
 		return;
 	}
 
-	for (i = 0; cur < NR_MAX_PVM_PRIO_IRQS ; i++) {
+	for (i = 0; cur < NR_MAX_PVM_PRIO_IRQS; i++) {
 		irq = pci_irq_vector(pdev, i);
 		if (irq < 0)
 			break;
-		dev_info(&vdev->dev, "PCI vector %u -> IRQ %d\n", i, irq);
-    irqs[cur++] = irq;
+    cfg = irq_cfg(irq);
+	  pvm_hypercall2(PVM_HC_PRIO_IRQ, cfg->dest_apicid, cfg->vector);
 	}
-  pvm_hypercall2(PVM_HC_PRIO_IRQ, (unsigned long)&irqs, cur);
 }
 #else
 static void virtnet_log_pci_irqs(struct virtio_device *vdev)

@@ -85,6 +85,12 @@ int host_mmu_init(void);
 
 #define MIN_HOST_PCID_FOR_GUEST			HOST_PCID_TAG_FOR_GUEST
 #define NUM_HOST_PCID_FOR_GUEST			HOST_PCID_TAG_FOR_GUEST
+#define NR_MAX_PVM_PRIO_IRQS	4
+struct kvm_pvm_irq_ctrl {
+  int irqs[NR_MAX_PVM_PRIO_IRQS];
+  rwlock_t lock;
+  int count;
+};
 
 struct vcpu_pvm {
 	struct kvm_vcpu vcpu;
@@ -154,21 +160,15 @@ struct vcpu_pvm {
 	struct desc_ptr idt_ptr;
 	struct desc_ptr gdt_ptr;
 	struct desc_struct tls_array[GDT_ENTRY_TLS_ENTRIES];
+  struct kvm_pvm_irq_ctrl irq_ctrl;
 };
 
-#define NR_MAX_PVM_PRIO_IRQS	4
-struct kvm_pvm_irq_ctrl {
-  int irqs[NR_MAX_PVM_PRIO_IRQS];
-  spinlock_t lock;
-  int count;
-};
 
 struct kvm_pvm {
 	struct kvm kvm;
 #if defined(CONFIG_VHOST_NET_MODULE) && defined(CONFIG_KVM_RUNPV)
   struct vhost_net *vhost_net;
 #endif
-  struct kvm_pvm_irq_ctrl irq_ctrl;
 };
 
 static __always_inline struct kvm_pvm *to_kvm_pvm(struct kvm *kvm)
