@@ -40,11 +40,6 @@ struct {
 	__uint(max_entries, 65536);
 } promote_map SEC(".maps");
 
-static __always_inline bool is_promo_irq(__u32 vector)
-{
-	return vector == 34 || vector == 35;
-}
-
 static __always_inline bool should_promote_task(struct task_struct *p)
 {
 	u64 key = p->pid;
@@ -116,10 +111,7 @@ int BPF_PROG(simple_tp_pvm_deliver_interrupt, __u64 pid,
 	u64 key = pid;
 
 	(void)vcpu_id;
-
-	if (is_promo_irq(vector)) 
-		set_promote_task_key(key, true);
-
+	set_promote_task_key(key, true);
 	return 0;
 }
 
@@ -131,8 +123,7 @@ int BPF_PROG(simple_tp_pvm_inject_irq, __u64 pid,
 
 	(void)vcpu_id;
 
-	if (is_promo_irq(vector))
-		set_promote_task_key(key, false);
+	set_promote_task_key(key, false);
 
 	return 0;
 }
@@ -141,6 +132,8 @@ void BPF_STRUCT_OPS(simple_dispatch, s32 cpu, struct task_struct *prev)
 {
   if(!scx_bpf_consume(DEFAULT_VCPU_DSQ_ID)) {
     scx_bpf_consume(SHARED_DSQ);
+  } else {
+    bpf_printk("consumed from vcpu high prio dsq\n");
   }
 }
 

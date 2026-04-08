@@ -1604,12 +1604,29 @@ static void pvm_set_gdt(struct kvm_vcpu *vcpu, struct desc_ptr *dt)
 	to_pvm(vcpu)->gdt_ptr = *dt;
 }
 
+static bool is_pvm_prio_irq(struct vcpu_pvm *pvm, int vector) {
+
+  bool ret = false;
+
+  read_lock(&pvm->irq_ctrl.lock);
+  for(int i = 0; i < NR_MAX_PVM_PRIO_IRQS; i++) 
+    if(pvm->irq_ctrl.irqs[i] == vector) {
+      ret = true;
+      break;
+    }
+  read_unlock(&pvm->irq_ctrl.lock);
+  return ret;
+}
+
 static void pvm_deliver_interrupt(struct kvm_lapic *apic, int delivery_mode,
 				  int trig_mode, int vector)
 {
 	struct kvm_vcpu *vcpu = apic->vcpu;
+  struct vcpu_pvm *pvm = to_pvm(vcpu);
 
-	trace_kvm_pvm_deliver_interrupt(vcpu->task->pid, vcpu->vcpu_id, (__u32)vector);
+  if(is_pvm_prio_irq(pvm, vector))
+    trace_kvm_pvm_deliver_interrupt(vcpu->task->pid, vcpu->vcpu_id, (__u32)vector);
+
 	kvm_lapic_set_irr(vector, apic);
 	kvm_make_request(KVM_REQ_EVENT, vcpu);
 	kvm_vcpu_kick(vcpu);
@@ -1909,7 +1926,9 @@ static void pvm_inject_irq(struct kvm_vcpu *vcpu, bool reinjected)
 	int irq = vcpu->arch.interrupt.nr;
 
 	trace_kvm_inj_virq(irq, vcpu->arch.interrupt.soft, false);
-  trace_kvm_pvm_inject_irq(vcpu->task->pid, vcpu->vcpu_id, (__u32)irq);
+
+  if(is_pvm_prio_irq(to_pvm(vcpu), irq))
+    trace_kvm_pvm_inject_irq(vcpu->task->pid, vcpu->vcpu_id, (__u32)irq);
 
 	to_pvm(vcpu)->switch_flags &= ~SWITCH_FLAGS_IRQ_WIN;
 
@@ -2038,25 +2057,15 @@ static int handle_hc_irq_halt(struct kvm_vcpu *vcpu)
 	return kvm_emulate_halt_noskip(vcpu);
 }
 
-static int handle_hc_prio_irq(struct kvm_vcpu *vcpu, gva_t buf, int count) {
+static int handle_hc_prio_irq(struct kvm_vcpu *vcpu, int dest_id, int apic_vector) {
 
-  struct kvm_pvm *pvm;
-  int irqs[NR_MAX_PVM_PRIO_IRQS];
-  struct x86_exception e;
+  struct vcpu_pvm *pvm;
 
-  pvm = to_kvm_pvm(vcpu->kvm);
-  kvm_read_guest_virt(vcpu, buf, irqs, count * sizeof(int), &e);
-
-  for(int i = 0; i < count; i++)  {
-    pr_info("%s: read prio irq %d: %d\n", __func__, irqs[i], i);
-  }
-
-  spin_lock(&pvm->irq_ctrl.lock);
-  for(int i = 0; i < count && pvm->irq_ctrl.count < NR_MAX_PVM_PRIO_IRQS; i++, pvm->irq_ctrl.count++)  {
-    pr_info("%s: add prio irq %d: %d\n", __func__, irqs[i], pvm->irq_ctrl.count);
-    pvm->irq_ctrl.irqs[pvm->irq_ctrl.count]= irqs[i];
-  }
-  spin_unlock(&pvm->irq_ctrl.lock);
+  pvm = to_pvm(kvm_get_vcpu(vcpu->kvm, dest_id));
+  write_lock(&pvm->irq_ctrl.lock);
+  if(pvm->irq_ctrl.count != NR_MAX_PVM_PRIO_IRQS) 
+    pvm->irq_ctrl.irqs[pvm->irq_ctrl.count++] = apic_vector;
+  write_unlock(&pvm->irq_ctrl.lock);
   kvm_rax_write(vcpu, 0);
   return 1;
 }
@@ -3478,6 +3487,10 @@ static int pvm_vcpu_create(struct kvm_vcpu *vcpu)
 	pvm->switch_flags = SWITCH_FLAGS_INIT;
 	kvm_gpc_init(&pvm->pvcs_gpc, vcpu->kvm, vcpu, KVM_GUEST_AND_HOST_USE_PFN);
 
+  for(int i = 0; i < NR_MAX_PVM_PRIO_IRQS; i++)
+    pvm->irq_ctrl.irqs[i] = -1;
+  pvm->irq_ctrl.count = 0;
+  rwlock_init(&pvm->irq_ctrl.lock);
 	return 0;
 }
 
@@ -3500,7 +3513,6 @@ static void pvm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
 
 static int pvm_vm_init(struct kvm *kvm)
 {
-  struct kvm_pvm *pvm = to_kvm_pvm(kvm);
 
 	kvm->arch.host_mmu_root_pgd = host_mmu_root_pgd;
 	kvm->page_buffer_base = (unsigned long)kvmalloc(sizeof(struct runpv_page_buffer), GFP_KERNEL | __GFP_ZERO);
@@ -3539,11 +3551,6 @@ static int pvm_vm_init(struct kvm *kvm)
 		kvm->gpt2spt_base = (unsigned long)gpt2spt;
 	}
   init_srcu_struct(&kvm->arch.mmu_srcu);
-  for(int i = 0; i < NR_MAX_PVM_PRIO_IRQS; i++)
-      pvm->irq_ctrl.irqs[i] = -1;
-
-  pvm->irq_ctrl.count = 0;
-  spin_lock_init(&pvm->irq_ctrl.lock);
 	return 0;
 }
 
