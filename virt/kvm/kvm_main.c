@@ -1214,6 +1214,7 @@ retry:
 				spin_lock_irqsave(&elem->lock, flags);
 				if (elem->pfn == KVM_PFN_ERR_FAULT) {
 					elem->pfn = page_to_pfn(page);
+					atomic_long_inc(&slot->arch.kpfn_faulted_pages);
 				} else {
 					spin_unlock_irqrestore(&elem->lock, flags);
 					put_page(page);
@@ -2906,7 +2907,7 @@ kvm_pfn_t __gfn_to_kpfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn,
   return pfn;
 }
 
-int kvm_free_kpfn(const struct kvm_memory_slot *slot, gfn_t gfn, bool atomic, bool interruptible)
+int kvm_free_kpfn(struct kvm_memory_slot *slot, gfn_t gfn, bool atomic, bool interruptible)
 {
   struct kvm_kpfn_element *elem = &slot->arch.kpfn_elems[gfn-slot->base_gfn];
   struct page *page;
@@ -2928,6 +2929,7 @@ int kvm_free_kpfn(const struct kvm_memory_slot *slot, gfn_t gfn, bool atomic, bo
   put_page(page);
   elem->pfn = KVM_PFN_ERR_FAULT;
   elem->hva_mapped = false;
+  atomic_long_dec(&slot->arch.kpfn_faulted_pages);
 
 out:
   if(atomic) 

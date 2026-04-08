@@ -1204,7 +1204,7 @@ kvm_pfn_t __gfn_to_pfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn,
 kvm_pfn_t __gfn_to_kpfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn,
     bool atomic, bool interruptible,bool write_fault,
     bool *writable, hva_t *hva);
-int kvm_free_kpfn(const struct kvm_memory_slot *slot, gfn_t gfn, bool atomic, bool interruptible);
+int kvm_free_kpfn(struct kvm_memory_slot *slot, gfn_t gfn, bool atomic, bool interruptible);
 
 void kvm_release_pfn_clean(kvm_pfn_t pfn);
 void kvm_release_pfn_dirty(kvm_pfn_t pfn);

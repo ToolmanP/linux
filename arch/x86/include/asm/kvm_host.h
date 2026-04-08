@@ -1059,7 +1059,8 @@ struct kvm_kpfn_element {
 struct kvm_arch_memory_slot {
 	struct kvm_rmap_head *rmap[KVM_NR_PAGE_SIZES];
 	struct kvm_lpage_info *lpage_info[KVM_NR_PAGE_SIZES - 1];
-  struct kvm_kpfn_element *kpfn_elems;
+	struct kvm_kpfn_element *kpfn_elems;
+	atomic_long_t kpfn_faulted_pages;
 	unsigned short *gfn_write_track;
 };
 

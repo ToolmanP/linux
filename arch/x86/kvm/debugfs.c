@@ -191,9 +191,72 @@ static const struct file_operations mmu_rmaps_stat_fops = {
 	.release	= kvm_mmu_rmaps_stat_release,
 };
 
+static int kvm_kpfn_faulted_show(struct seq_file *m, void *v)
+{
+	struct kvm *kvm = m->private;
+	struct kvm_memslots *slots;
+	struct kvm_memory_slot *slot;
+	unsigned long total = 0;
+	int i, bkt;
+
+	mutex_lock(&kvm->slots_lock);
+	for (i = 0; i < KVM_ADDRESS_SPACE_NUM; i++) {
+		slots = __kvm_memslots(kvm, i);
+		kvm_for_each_memslot(slot, bkt, slots) {
+			unsigned long n;
+
+			if (!slot->arch.kpfn_elems)
+				continue;
+			n = atomic_long_read(&slot->arch.kpfn_faulted_pages);
+			seq_printf(m,
+				   "as=%d slot=%u base_gfn=0x%llx npages=%lu faulted=%lu\n",
+				   i, slot->id, slot->base_gfn,
+				   slot->npages, n);
+			total += n;
+		}
+	}
+	mutex_unlock(&kvm->slots_lock);
+
+	seq_printf(m, "total_faulted_pages=%lu total_faulted_bytes=%lu\n",
+		   total, total << PAGE_SHIFT);
+	return 0;
+}
+
+static int kvm_kpfn_faulted_open(struct inode *inode, struct file *file)
+{
+	struct kvm *kvm = inode->i_private;
+	int r;
+
+	if (!kvm_get_kvm_safe(kvm))
+		return -ENOENT;
+
+	r = single_open(file, kvm_kpfn_faulted_show, kvm);
+	if (r < 0)
+		kvm_put_kvm(kvm);
+	return r;
+}
+
+static int kvm_kpfn_faulted_release(struct inode *inode, struct file *file)
+{
+	struct kvm *kvm = inode->i_private;
+
+	kvm_put_kvm(kvm);
+	return single_release(inode, file);
+}
+
+static const struct file_operations kpfn_faulted_fops = {
+	.owner		= THIS_MODULE,
+	.open		= kvm_kpfn_faulted_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= kvm_kpfn_faulted_release,
+};
+
 int kvm_arch_create_vm_debugfs(struct kvm *kvm)
 {
 	debugfs_create_file("mmu_rmaps_stat", 0644, kvm->debugfs_dentry, kvm,
 			    &mmu_rmaps_stat_fops);
+	debugfs_create_file("kpfn_faulted", 0444, kvm->debugfs_dentry, kvm,
+			    &kpfn_faulted_fops);
 	return 0;
 }

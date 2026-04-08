@@ -6834,6 +6834,7 @@ int runpv_faultin_direct_mapping_fast(struct kvm_vcpu *vcpu,
 		spin_lock_irqsave(&elem->lock, flags);
 		if (elem->pfn == KVM_PFN_ERR_FAULT) {
 			elem->pfn = page_to_pfn(page);
+			atomic_long_inc(&slot->arch.kpfn_faulted_pages);
 		} else {
 			spin_unlock_irqrestore(&elem->lock, flags);
 			__free_page(page);
