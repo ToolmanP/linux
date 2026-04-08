@@ -543,27 +543,21 @@ EXPORT_SYMBOL(runpv_set_pte);
 
 static void runpv_set_pmd(pmd_t *pmdp, pmd_t pmdval)
 {
-	// pr_info("%s parent %#lx pfn %#lx\n", __func__, __pa(pmdp), (native_pmd_val(pmdval) & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT);
 	if (runpv_helper_pmd_set(__pa(pmdp), native_pmd_val(pmdval))) {
-		// pr_info("set pmd %#lx to pmdp %#lx failed\n", native_pmd_val(pmdval), pmdp);
 		native_set_pmd(pmdp, pmdval);
 	}
 }
 
 static void runpv_set_pud(pud_t *pudp, pud_t pudval)
 {
-	// pr_info("%s parent %#lx pfn %#lx\n", __func__, __pa(pudp), (native_pud_val(pudval) & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT);
 	if (runpv_helper_pud_set(__pa(pudp), native_pud_val(pudval))) {
-		// pr_info("set pud %#lx to pudp %#lx failed\n", native_pud_val(pudval), pudp);
 		native_set_pud(pudp, pudval);
 	}
 }
 
 static void runpv_set_p4d(p4d_t *p4dp, p4d_t p4dval)
 {
-	// pr_info("%s parent %#lx pfn %#lx\n", __func__, __pa(p4dp), (native_p4d_val(p4dval) & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT);
 	if (runpv_helper_p4d_set(__pa(p4dp), native_p4d_val(p4dval))) {
-		// pr_info("set p4d %#lx to p4dp %#lx failed\n", native_p4d_val(p4dval), p4dp);
 		native_set_p4d(p4dp, p4dval);
 	}
 }
@@ -648,9 +642,9 @@ void __init runpv_early_setup(unsigned long pgd)
 	pvm_hypercall2(PVM_HC_ALLOC_PTE, __pa(pgd) >> PAGE_SHIFT, PVM_SET_PTE_P4D);
 
 	pv_ops.mmu.set_pte = runpv_set_pte;
-	// pv_ops.mmu.set_pmd = runpv_set_pmd;
-	// pv_ops.mmu.set_pud = runpv_set_pud;
-	// pv_ops.mmu.set_p4d = runpv_set_p4d;
+	pv_ops.mmu.set_pmd = runpv_set_pmd;
+	pv_ops.mmu.set_pud = runpv_set_pud;
+	pv_ops.mmu.set_p4d = runpv_set_p4d;
 
 	pv_ops.mmu.alloc_pte = runpv_alloc_pte;
 	pv_ops.mmu.alloc_pmd = runpv_alloc_pmd;
