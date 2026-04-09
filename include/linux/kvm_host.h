@@ -789,6 +789,7 @@ struct kvm {
 #endif
 #if defined(CONFIG_VHOST_NET_MODULE) && defined(CONFIG_KVM_RUNPV)
   struct vhost_net *vhost_net;
+  struct file *vhost_f;
 #endif
 
 #if defined(CONFIG_MMU_NOTIFIER) && defined(KVM_ARCH_WANT_MMU_NOTIFIER)

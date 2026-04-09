@@ -1252,6 +1252,8 @@ static struct kvm *kvm_create_vm(unsigned long type, const char *fdname)
   KVM_MMU_SEQ_LOCK_INIT(kvm);
 	mmgrab(current->mm);
 	kvm->mm = current->mm;
+  kvm->vhost_net = NULL;
+  kvm->vhost_f = NULL;
 	kvm_eventfd_init(kvm);
 	mutex_init(&kvm->lock);
 	mutex_init(&kvm->irq_lock);
@@ -5046,6 +5048,17 @@ static int kvm_vm_ioctl_set_direct_vhost_net(struct kvm *kvm, int fd){
   if(!f) 
     return -ENODEV;
   kvm->vhost_net = f->private_data;
+  kvm->vhost_f = f;
+  return 0;
+}
+
+static int kvm_vm_ioctl_remove_direct_vhost_net(struct kvm *kvm, int fd){
+
+  if(kvm->vhost_f)
+    fput(kvm->vhost_f);
+
+  kvm->vhost_f = NULL;
+  kvm->vhost_net = NULL;
   return 0;
 }
 
@@ -5237,6 +5250,11 @@ static long kvm_vm_ioctl(struct file *filp,
   case KVM_SET_DIRECT_VHOST_NET: {
       int vhost_net_fd = (int)(long)argp;
       r = kvm_vm_ioctl_set_direct_vhost_net(kvm, vhost_net_fd);
+      break;
+  }
+  case KVM_REMOVE_DIRECT_VHOST_NET: {
+      int vhost_net_fd = (int)(long)argp;
+      r = kvm_vm_ioctl_remove_direct_vhost_net(kvm, vhost_net_fd);
       break;
   }
 	default:
