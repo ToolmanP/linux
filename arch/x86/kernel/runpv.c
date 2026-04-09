@@ -61,7 +61,7 @@ static int do_runpv_remap_pvcs_tls(struct task_struct *tsk)
 	vm_flags_set(vma, VM_READ | VM_MAYREAD | VM_WRITE | VM_MAYWRITE | VM_DONTEXPAND | VM_MAYSHARE | VM_SHARED | VM_NORESERVE | VM_DONTDUMP);
 	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
 	BUG_ON(insert_vm_struct(mm, vma) < 0);
-  flush_tlb_all();
+  flush_tlb_one_user(uaddr);
 
 vma_found:
 	ret = remap_pfn_range(vma, uaddr, pfn, PAGE_SIZE, vma->vm_page_prot);
@@ -650,10 +650,12 @@ void __init runpv_early_setup(unsigned long pgd)
 	pv_ops.mmu.alloc_pmd = runpv_alloc_pmd;
 	pv_ops.mmu.alloc_pud = runpv_alloc_pud;
 	pv_ops.mmu.alloc_p4d = runpv_alloc_p4d;
+
 	pv_ops.mmu.release_pte = runpv_release_pte;
 	pv_ops.mmu.release_pmd = runpv_release_pmd;
 	pv_ops.mmu.release_pud = runpv_release_pud;
 	pv_ops.mmu.release_p4d = runpv_release_p4d;
+
 	pv_ops.mmu.pgd_alloc = runpv_pgd_alloc;
 	pv_ops.mmu.pgd_free = runpv_pgd_free;
 

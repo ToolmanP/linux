@@ -4421,6 +4421,7 @@ retry:
 		goto retry;
 	}
 
+  sp->role.access = access;
 	ret = link_shadow_page_atomic(vcpu, sptep, sp);
 	sp_write_unlock(vcpu->kvm, sp);
 	return ret;
