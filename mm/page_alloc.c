@@ -2190,6 +2190,8 @@ int decay_pcp_high(struct zone *zone, struct per_cpu_pages *pcp)
 	int high_min, to_drain, batch;
 	int todo = 0;
 
+	return todo;
+
 	high_min = READ_ONCE(pcp->high_min);
 	batch = READ_ONCE(pcp->batch);
 	/*
