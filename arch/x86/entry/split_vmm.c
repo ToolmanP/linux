@@ -54,7 +54,7 @@ static inline void runpv_mmu_write_unlock(void)
 
 long runpv_hc_handle_tlb_invlpg(unsigned long addr)
 {
-	pv_info(RUNPV_HC_DEBUG, "PVM: tlb invlpg %#lx\n", addr);
+	asm volatile("invlpg (%0)" ::"r" (addr) : "memory");
 	
 	return 0;
 }

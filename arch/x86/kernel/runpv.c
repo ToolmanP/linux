@@ -634,7 +634,7 @@ static void runpv_flush_tlb_kernel(void)
 
 static void runpv_flush_tlb_one_user(unsigned long addr)
 {
-	pvm_hypercall1(PVM_HC_TLB_INVLPG, addr);
+	runpv_hypercall1(RUNPV_HC_TLB_INVLPG, addr);
 }
 
 void __init runpv_early_setup(unsigned long pgd)
