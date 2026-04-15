@@ -32,24 +32,6 @@
 
 #define RUNPV_HC_DEBUG 0
 
-static inline long runpv_mmu_write_trylock(void)
-{
-	unsigned long mmu_lock_ptr = this_cpu_read(cpu_tss_rw.tss_ex.mmu_lock_ptr);
-	if (!mmu_lock_ptr)
-		return -EINVAL;
-	if (do_raw_write_trylock((rwlock_t *)mmu_lock_ptr))
-		return 0;
-	return -EAGAIN;
-}
-
-static inline void runpv_mmu_write_unlock(void)
-{
-	unsigned long mmu_lock_ptr = this_cpu_read(cpu_tss_rw.tss_ex.mmu_lock_ptr);
-	if (!mmu_lock_ptr)
-		return;
-	do_raw_write_unlock((rwlock_t *)mmu_lock_ptr);
-}
-
 // RUNPV-TODO: pcid tlb flush
 
 long runpv_hc_handle_tlb_invlpg(unsigned long addr)
