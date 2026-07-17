@@ -129,10 +129,7 @@ struct tss_extra {
 	unsigned long smod_rsp;
 	unsigned long fast_hypercall_rsp;
 	unsigned long fast_hypercall_current_cr3;
-	unsigned long page_buffer_base;
-	unsigned long page_array_base;
 	unsigned long page_offset_base;
-	unsigned long mmu_lock_ptr;
 	unsigned long vcpu_ptr;
 	unsigned long runpv_mmu_op_func;
 	unsigned long host_cr3_switched;

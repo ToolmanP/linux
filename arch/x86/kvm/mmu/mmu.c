@@ -1640,13 +1640,6 @@ static void drop_parent_pte(struct kvm *kvm, struct kvm_mmu_page *sp,
 static void mmu_page_remove_parent_pte(struct kvm *kvm, struct kvm_mmu_page *sp,
 				       u64 *parent_pte);
 
-static void drop_spte_vcpu(struct kvm_vcpu *vcpu, u64 *sptep)
-{
-	u64 old_spte = mmu_spte_clear_track_bits(vcpu->kvm, sptep);
-
-	if (is_shadow_present_pte(old_spte))
-		rmap_remove_vcpu(vcpu, sptep);
-}
 static int try_drop_obsolete_spte(struct kvm *kvm, u64 *sptep, bool flush)
 {
 	struct kvm_mmu_page *sp;
@@ -3095,18 +3088,6 @@ restart:
 	return sp;
 }
 
-static struct kvm_mmu_page *__kvm_mmu_get_shadow_page_atomic(struct kvm *kvm,
-						      struct kvm_vcpu *vcpu,
-						      struct shadow_page_caches *caches,
-						      gfn_t gfn,
-						      union kvm_mmu_page_role role)
-{
-	struct hlist_head *sp_list;
-	struct kvm_mmu_page *sp;
-	sp_list = &kvm->arch.mmu_page_hash[role.level][kvm_page_table_hashfn(gfn)];
-	sp = kvm_mmu_find_shadow_page_fast(kvm, vcpu, gfn, sp_list, role);
-	return sp;
-}
 
 static struct kvm_mmu_page *kvm_mmu_get_shadow_page(struct kvm_vcpu *vcpu,
 						    gfn_t gfn,
@@ -3120,19 +3101,6 @@ static struct kvm_mmu_page *kvm_mmu_get_shadow_page(struct kvm_vcpu *vcpu,
 	};
 
 	return __kvm_mmu_get_shadow_page(vcpu->kvm, vcpu, &caches, gfn, role, rcu_idx);
-}
-
-static struct kvm_mmu_page *kvm_mmu_get_shadow_page_atomic(struct kvm_vcpu *vcpu,
-						    gfn_t gfn,
-						    union kvm_mmu_page_role role)
-{
-	struct shadow_page_caches caches = {
-		.page_header_cache = &vcpu->arch.mmu_page_header_cache,
-		.shadow_page_cache = &vcpu->arch.mmu_shadow_page_cache,
-		.shadowed_info_cache = &vcpu->arch.mmu_shadowed_info_cache,
-	};
-
-	return __kvm_mmu_get_shadow_page_atomic(vcpu->kvm, vcpu, &caches, gfn, role);
 }
 
 static union kvm_mmu_page_role kvm_mmu_child_role(u64 *sptep, bool direct,

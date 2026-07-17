@@ -814,8 +814,6 @@ struct kvm {
 	bool vm_dead;
 
 	unsigned long page_offset_base;
-	unsigned long page_buffer_base;
-	unsigned long page_array_base;
 	void **gpt2spt_arr;
 	struct page **gpt2spt_pages;
 	unsigned int gpt2spt_npages;
