@@ -1049,6 +1049,8 @@ again:
 	orig_src_pte = src_pte;
 	orig_dst_pte = dst_pte;
 	arch_enter_lazy_mmu_mode();
+	/* Let paravirtualized MMUs fuse the paired fork PTE operations. */
+	arch_dup_pte_batch_begin(orig_src_pte, orig_dst_pte, addr, end);
 
 	do {
 		/*
@@ -1109,6 +1111,7 @@ again:
 		progress += 8;
 	} while (dst_pte++, src_pte++, addr += PAGE_SIZE, addr != end);
 
+	arch_dup_pte_batch_end();
 	arch_leave_lazy_mmu_mode();
 	pte_unmap_unlock(orig_src_pte, src_ptl);
 	add_mm_rss_vec(dst_mm, rss);

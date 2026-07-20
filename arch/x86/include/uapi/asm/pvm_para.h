@@ -128,6 +128,25 @@
 					(RUNPV_HC_MMU_PMDP_TEST_AND_CLEAR_YOUNG+1)
 #define RUNPV_HC_MMU_PMDP_INVALIDATE_AD \
 					(RUNPV_HC_MMU_PUDP_TEST_AND_CLEAR_YOUNG+1)
+#define RUNPV_HC_MMU_CLONE_PTE_BATCH \
+					(RUNPV_HC_MMU_PMDP_INVALIDATE_AD + 1)
+
+#define RUNPV_MMU_CLONE_BATCH_MAX	32
+#define RUNPV_MMU_CLONE_F_WRPROTECT	_BITUL(0)
+
+#ifndef __ASSEMBLY__
+/* One validated source/destination pair from Linux's fork PTE walk. */
+struct runpv_mmu_clone_pte {
+	u64 src_ptep_pa;
+	u64 dst_ptep_pa;
+	u64 dst_pte;
+	u64 flags;
+};
+
+struct runpv_mmu_clone_batch {
+	struct runpv_mmu_clone_pte entries[RUNPV_MMU_CLONE_BATCH_MAX];
+};
+#endif
 
 
 

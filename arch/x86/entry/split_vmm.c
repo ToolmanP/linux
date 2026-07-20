@@ -92,6 +92,7 @@ __visible noinstr long do_fast_hypercall(long nr, long a0, long a1, long a2, lon
 	case RUNPV_HC_MMU_PMDP_TEST_AND_CLEAR_YOUNG:
 	case RUNPV_HC_MMU_PUDP_TEST_AND_CLEAR_YOUNG:
 	case RUNPV_HC_MMU_PMDP_INVALIDATE_AD:
+	case RUNPV_HC_MMU_CLONE_PTE_BATCH:
 		return runpv_hc_handle_mmu_op(nr, a0, a1, a2, a3);
 	case RUNPV_HC_TLB_FLUSH:
 		ret = runpv_hc_handle_tlb_flush();

@@ -20,6 +20,12 @@ void runpv_setup_pvcs(int cpu);
 int runpv_mark_remap_pvcs_tls(struct task_struct *tsk);
 void entry_DIRECTCALL_64_runpv(void);
 
+void runpv_dup_pte_batch_begin(pte_t *src_pte, pte_t *dst_pte,
+			       unsigned long addr, unsigned long end);
+void runpv_dup_pte_batch_end(void);
+
+#define arch_dup_pte_batch_begin runpv_dup_pte_batch_begin
+#define arch_dup_pte_batch_end runpv_dup_pte_batch_end
 
 void runpv_alloc_from_buddy(struct page *pages[], unsigned int orders[], int nr_pages);
 void runpv_free_to_buddy(struct page *pages[], unsigned int orders[], int nr_pages);
@@ -93,6 +99,16 @@ static inline void runpv_init_direct_mapping_shadow(unsigned long start_pfn, uns
 
 static inline void runpv_mark_remap_pvcs_tls(struct task_struct *tsk) {
 
+}
+
+static inline void arch_dup_pte_batch_begin(pte_t *src_pte, pte_t *dst_pte,
+					    unsigned long addr,
+					    unsigned long end)
+{
+}
+
+static inline void arch_dup_pte_batch_end(void)
+{
 }
 
 

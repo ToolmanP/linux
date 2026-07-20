@@ -18,6 +18,7 @@
 #include <linux/spinlock.h>
 #include <linux/errno.h>
 #include <linux/ktime.h>
+#include <linux/bitmap.h>
 #include <asm/tlbflush.h>
 
 void runpv_setup_pvcs(int cpu)
@@ -103,8 +104,19 @@ __visible noinstr bool do_syscall_64_runpv(struct pt_regs *regs, int nr)
 	return true;
 }
 
+enum runpv_clone_batch_support {
+	RUNPV_CLONE_BATCH_UNKNOWN,
+	RUNPV_CLONE_BATCH_PROBING,
+	RUNPV_CLONE_BATCH_SUPPORTED,
+	RUNPV_CLONE_BATCH_UNSUPPORTED,
+};
+
+static atomic_t runpv_clone_batch_support =
+	ATOMIC_INIT(RUNPV_CLONE_BATCH_UNKNOWN);
+
 static inline long runpv_hypercall4(long nr, long a0, long a1, long a2, long a3)
 {
+	long requested_nr = nr;
 	long ret;
 	register long r10_reg asm("r10") = a2;
 	register long r12_reg asm("r12") = a3;
@@ -113,7 +125,11 @@ static inline long runpv_hypercall4(long nr, long a0, long a1, long a2, long a3)
 		     :
 		     : "memory", "rcx", "r8", "r9","r11", "r13", "r14", "rbx", "rbp", "r15");
 	if (ret == -ENOSYS) {
-		pr_info("NOSYS: nr %lx\n", nr);
+		if (requested_nr == RUNPV_HC_MMU_CLONE_PTE_BATCH)
+			atomic_set(&runpv_clone_batch_support,
+				   RUNPV_CLONE_BATCH_UNSUPPORTED);
+		else
+			pr_info("NOSYS: nr %lx\n", requested_nr);
 	}
 	return ret;
 }
@@ -182,6 +198,211 @@ static inline long runpv_helper_pud_set(unsigned long pudp, unsigned long pud)
 static inline long runpv_helper_p4d_set(unsigned long p4dp, unsigned long p4d)
 {
 	return runpv_hypercall2_retry(RUNPV_HC_MMU_P4D_SET, (long)p4dp, (long)p4d);
+}
+
+static void runpv_ptep_wrprotect_now(pte_t *ptep)
+{
+	long ret;
+
+	ret = runpv_hypercall1_retry(RUNPV_HC_MMU_PTEP_SET_WRPROTECT,
+				     __pa(ptep));
+	if (IS_ERR_VALUE(ret)) {
+		pte_t old_pte, new_pte;
+
+		old_pte = READ_ONCE(*ptep);
+		do {
+			new_pte = pte_wrprotect(old_pte);
+		} while (!try_cmpxchg((long *)&ptep->pte, (long *)&old_pte,
+				      *(long *)&new_pte));
+	}
+}
+
+struct runpv_dup_pte_batch {
+	bool active;
+	bool enabled;
+	unsigned int nesting;
+	unsigned int nr_ptes;
+	unsigned int nr_entries;
+	unsigned long src_start;
+	unsigned long dst_start;
+	DECLARE_BITMAP(wrprotect, PTRS_PER_PTE);
+	struct runpv_mmu_clone_batch batch;
+};
+
+static DEFINE_PER_CPU_PAGE_ALIGNED(struct runpv_dup_pte_batch,
+				   runpv_dup_pte_batch);
+
+static long runpv_dup_pte_batch_hypercall(unsigned long batch_pa,
+					  unsigned int nr_entries)
+{
+	int support;
+	bool probing = false;
+	long ret;
+
+	support = atomic_read(&runpv_clone_batch_support);
+	if (support == RUNPV_CLONE_BATCH_UNSUPPORTED)
+		return -EOPNOTSUPP;
+	if (support == RUNPV_CLONE_BATCH_PROBING)
+		return -EOPNOTSUPP;
+	if (support == RUNPV_CLONE_BATCH_UNKNOWN) {
+		if (atomic_cmpxchg(&runpv_clone_batch_support,
+				   RUNPV_CLONE_BATCH_UNKNOWN,
+				   RUNPV_CLONE_BATCH_PROBING) !=
+		    RUNPV_CLONE_BATCH_UNKNOWN)
+			return -EOPNOTSUPP;
+		probing = true;
+	}
+
+	ret = runpv_hypercall2_retry(RUNPV_HC_MMU_CLONE_PTE_BATCH,
+				     batch_pa, nr_entries);
+	if (probing)
+		atomic_cmpxchg(&runpv_clone_batch_support,
+			       RUNPV_CLONE_BATCH_PROBING,
+			       RUNPV_CLONE_BATCH_SUPPORTED);
+
+	return ret;
+}
+
+/* Submit one bounded command page and fall back to the scalar ABI on error. */
+static void runpv_dup_pte_batch_flush(struct runpv_dup_pte_batch *state)
+{
+	unsigned long batch_pa;
+	unsigned int i;
+	long ret;
+
+	if (!state->nr_entries)
+		return;
+
+	batch_pa = per_cpu_ptr_to_phys(&state->batch);
+	ret = runpv_dup_pte_batch_hypercall(batch_pa, state->nr_entries);
+	if (ret) {
+		for (i = 0; i < state->nr_entries; i++) {
+			struct runpv_mmu_clone_pte *entry =
+				&state->batch.entries[i];
+
+			if (entry->flags & RUNPV_MMU_CLONE_F_WRPROTECT)
+				runpv_ptep_wrprotect_now(__va(entry->src_ptep_pa));
+			if (runpv_helper_pte_set(entry->dst_ptep_pa,
+						 entry->dst_pte))
+				native_set_pte(__va(entry->dst_ptep_pa),
+					       native_make_pte(entry->dst_pte));
+		}
+	}
+	state->nr_entries = 0;
+}
+
+static bool runpv_dup_pte_index(unsigned long ptep, unsigned long start,
+				unsigned int nr_ptes, unsigned int *index)
+{
+	unsigned long offset;
+
+	if (ptep < start)
+		return false;
+
+	offset = ptep - start;
+	if (!IS_ALIGNED(offset, sizeof(pte_t)) ||
+	    offset / sizeof(pte_t) >= nr_ptes)
+		return false;
+
+	*index = offset / sizeof(pte_t);
+	return true;
+}
+
+static bool runpv_dup_pte_batch_wrprotect(pte_t *ptep)
+{
+	struct runpv_dup_pte_batch *state;
+	unsigned int index;
+
+	state = this_cpu_ptr(&runpv_dup_pte_batch);
+	if (!state->active || !state->enabled ||
+	    !runpv_dup_pte_index((unsigned long)ptep, state->src_start,
+				 state->nr_ptes, &index))
+		return false;
+
+	__set_bit(index, state->wrprotect);
+	return true;
+}
+
+static bool runpv_dup_pte_batch_set(pte_t *ptep, pte_t pteval)
+{
+	struct runpv_dup_pte_batch *state;
+	struct runpv_mmu_clone_pte *entry;
+	unsigned int index;
+
+	state = this_cpu_ptr(&runpv_dup_pte_batch);
+	if (!state->active || !state->enabled || !pte_present(pteval) ||
+	    !runpv_dup_pte_index((unsigned long)ptep, state->dst_start,
+				 state->nr_ptes, &index))
+		return false;
+
+	if (state->nr_entries == RUNPV_MMU_CLONE_BATCH_MAX)
+		runpv_dup_pte_batch_flush(state);
+
+	entry = &state->batch.entries[state->nr_entries++];
+	entry->src_ptep_pa = __pa(state->src_start + index * sizeof(pte_t));
+	entry->dst_ptep_pa = __pa(ptep);
+	entry->dst_pte = native_pte_val(pteval);
+	entry->flags = test_and_clear_bit(index, state->wrprotect) ?
+			 RUNPV_MMU_CLONE_F_WRPROTECT : 0;
+
+	return true;
+}
+
+void runpv_dup_pte_batch_begin(pte_t *src_pte, pte_t *dst_pte,
+			       unsigned long addr, unsigned long end)
+{
+	struct runpv_dup_pte_batch *state;
+
+	preempt_disable();
+	state = this_cpu_ptr(&runpv_dup_pte_batch);
+	if (WARN_ON_ONCE(state->active)) {
+		state->nesting++;
+		return;
+	}
+
+	state->active = true;
+	state->enabled = atomic_read(&runpv_clone_batch_support) !=
+			 RUNPV_CLONE_BATCH_UNSUPPORTED && end > addr &&
+			 (end - addr) / PAGE_SIZE <= PTRS_PER_PTE;
+	if (!state->enabled)
+		return;
+
+	state->nr_ptes = (end - addr) / PAGE_SIZE;
+	state->nr_entries = 0;
+	state->src_start = (unsigned long)src_pte;
+	state->dst_start = (unsigned long)dst_pte;
+	bitmap_zero(state->wrprotect, PTRS_PER_PTE);
+}
+
+void runpv_dup_pte_batch_end(void)
+{
+	struct runpv_dup_pte_batch *state;
+	unsigned int index;
+
+	state = this_cpu_ptr(&runpv_dup_pte_batch);
+	if (WARN_ON_ONCE(!state->active))
+		return;
+	if (state->nesting) {
+		state->nesting--;
+		preempt_enable();
+		return;
+	}
+	if (!state->enabled)
+		goto out;
+
+	runpv_dup_pte_batch_flush(state);
+
+	for_each_set_bit(index, state->wrprotect, state->nr_ptes) {
+		pte_t *ptep = (pte_t *)(state->src_start +
+					 index * sizeof(pte_t));
+
+		runpv_ptep_wrprotect_now(ptep);
+	}
+
+out:
+	state->enabled = false;
+	state->active = false;
+	preempt_enable();
 }
 
 static __always_inline unsigned long runpv_gpt2spt_base(void)
@@ -278,16 +499,10 @@ EXPORT_SYMBOL_GPL(runpv_ptep_get_and_clear_full);
 void runpv_ptep_set_wrprotect(struct mm_struct *mm, unsigned long addr,
 			      pte_t *ptep)
 {
-	long ret = runpv_hypercall1_retry(RUNPV_HC_MMU_PTEP_SET_WRPROTECT, (long)__pa(ptep));
-	if (IS_ERR_VALUE(ret)) {
-		pte_t old_pte, new_pte;
-	
-		old_pte = READ_ONCE(*ptep);
-		do {
-			new_pte = pte_wrprotect(old_pte);
-		} while (!try_cmpxchg((long *)&ptep->pte, (long *)&old_pte,
-					  *(long *)&new_pte));
-	}
+	if (runpv_dup_pte_batch_wrprotect(ptep))
+		return;
+
+	runpv_ptep_wrprotect_now(ptep);
 }
 EXPORT_SYMBOL_GPL(runpv_ptep_set_wrprotect);
 
@@ -533,6 +748,9 @@ EXPORT_SYMBOL_GPL(runpv_pfn_event_exit);
 
 void runpv_set_pte(pte_t *ptep, pte_t pteval)
 {
+	if (runpv_dup_pte_batch_set(ptep, pteval))
+		return;
+
 	// pr_info("%s parent %#lx pfn %#lx\n", __func__, __pa(ptep), (native_pte_val(pteval) & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT);
 	if (runpv_helper_pte_set(__pa(ptep), native_pte_val(pteval))) {
 		// pr_info("set pte %#lx to ptep %#lx failed\n", native_pte_val(pteval), ptep);

@@ -4636,6 +4636,192 @@ out_unlock:
 	return ret;
 }
 
+static int runpv_mmu_try_lock_sp(struct kvm *kvm,
+				 struct kvm_mmu_page *sp)
+{
+	int ret;
+
+	ret = sp_try_write_lock(kvm, sp);
+	if (ret == -EBUSY)
+		return ret;
+	if (ret) {
+		sp_write_unlock(kvm, sp);
+		return -EAGAIN;
+	}
+
+	return 0;
+}
+
+/*
+ * Clone a bounded group from one pair of guest/shadow PTE pages.  All records
+ * are validated and all fallback PFNs are resolved before the first mutation,
+ * so errors are safe for the guest to replay through the scalar MMU ABI.
+ */
+static long runpv_mmu_clone_pte_batch(struct kvm_vcpu *vcpu,
+				      gpa_t batch_pa, unsigned int nr)
+{
+	struct runpv_mmu_clone_pte records[RUNPV_MMU_CLONE_BATCH_MAX];
+	union kvm_mmu_page_role role;
+	struct runpv_mmu_clone_pte *guest_records;
+	struct kvm_mmu_page *src_sp, *dst_sp, *first_sp, *second_sp;
+	struct kvm_memory_slot *slots[RUNPV_MMU_CLONE_BATCH_MAX];
+	kvm_pfn_t pfns[RUNPV_MMU_CLONE_BATCH_MAX];
+	bool release_pfns[RUNPV_MMU_CLONE_BATCH_MAX] = {};
+	struct kvm *kvm = vcpu->kvm;
+	gpa_t src_base, dst_base;
+	u64 *src_gpt, *dst_gpt;
+	unsigned int i;
+	int rcu_idx, ret;
+
+	if (!nr || nr > RUNPV_MMU_CLONE_BATCH_MAX ||
+	    !IS_ALIGNED(batch_pa, __alignof__(struct runpv_mmu_clone_pte)) ||
+	    offset_in_page(batch_pa) +
+		 nr * sizeof(struct runpv_mmu_clone_pte) > PAGE_SIZE)
+		return -EINVAL;
+
+	guest_records = runpv_gpa_to_va(vcpu, batch_pa);
+	if (!guest_records)
+		return -EFAULT;
+	memcpy(records, guest_records, nr * sizeof(*records));
+
+	src_base = records[0].src_ptep_pa & PAGE_MASK;
+	dst_base = records[0].dst_ptep_pa & PAGE_MASK;
+	if (src_base == dst_base)
+		return -EINVAL;
+
+	src_gpt = runpv_gpa_to_va(vcpu, src_base);
+	dst_gpt = runpv_gpa_to_va(vcpu, dst_base);
+	if (!src_gpt || !dst_gpt)
+		return -EFAULT;
+
+	for (i = 0; i < nr; i++) {
+		struct runpv_mmu_clone_pte *record = &records[i];
+		gfn_t dst_gfn;
+
+		if ((record->src_ptep_pa & PAGE_MASK) != src_base ||
+		    (record->dst_ptep_pa & PAGE_MASK) != dst_base ||
+		    !IS_ALIGNED(record->src_ptep_pa, sizeof(u64)) ||
+		    !IS_ALIGNED(record->dst_ptep_pa, sizeof(u64)) ||
+		    record->flags & ~RUNPV_MMU_CLONE_F_WRPROTECT ||
+		    !(record->dst_pte & _PAGE_PRESENT))
+			return -EINVAL;
+
+		dst_gfn = (record->dst_pte & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT;
+		if (!kvm_vcpu_gfn_to_memslot(vcpu, dst_gfn))
+			return -EINVAL;
+	}
+
+	if (!read_trylock(&kvm->mmu_invalidate_seq_lock))
+		return -EAGAIN;
+	rcu_idx = srcu_read_lock(&kvm->arch.mmu_srcu);
+
+	role = vcpu->arch.mmu->root_role;
+	role.level = PVM_SET_PTE_PTE;
+	role.quadrant = 0;
+
+	src_sp = kvm_mmu_find_shadow_page_atomic(vcpu, src_base >> PAGE_SHIFT,
+						 role);
+	dst_sp = kvm_mmu_find_shadow_page_atomic(vcpu, dst_base >> PAGE_SHIFT,
+						 role);
+	if (!src_sp || !dst_sp || src_sp == dst_sp) {
+		ret = -ENODATA;
+		goto out_srcu;
+	}
+
+	if ((unsigned long)src_sp < (unsigned long)dst_sp) {
+		first_sp = src_sp;
+		second_sp = dst_sp;
+	} else {
+		first_sp = dst_sp;
+		second_sp = src_sp;
+	}
+
+	ret = runpv_mmu_try_lock_sp(kvm, first_sp);
+	if (ret)
+		goto out_srcu;
+	ret = runpv_mmu_try_lock_sp(kvm, second_sp);
+	if (ret) {
+		sp_write_unlock(kvm, first_sp);
+		goto out_srcu;
+	}
+
+	/* Validate and resolve the batch before changing either page table. */
+	for (i = 0; i < nr; i++) {
+		struct runpv_mmu_clone_pte *record = &records[i];
+		unsigned int src_index = offset_in_page(record->src_ptep_pa) /
+					 sizeof(u64);
+		u64 src_spte = READ_ONCE(src_sp->spt[src_index]);
+		u64 src_pte = READ_ONCE(src_gpt[src_index]);
+		gfn_t src_gfn = (src_pte & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT;
+		gfn_t dst_gfn = (record->dst_pte & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT;
+
+		if (!(src_pte & _PAGE_PRESENT) ||
+		    ((record->flags & RUNPV_MMU_CLONE_F_WRPROTECT) &&
+		     ((src_pte ^ record->dst_pte) & PHYSICAL_PAGE_MASK))) {
+			ret = -EINVAL;
+			goto out_release;
+		}
+
+		slots[i] = kvm_vcpu_gfn_to_memslot(vcpu, dst_gfn);
+		if (src_gfn == dst_gfn && is_shadow_present_pte(src_spte)) {
+			pfns[i] = spte_to_pfn(src_spte);
+		} else {
+			pfns[i] = gfn_to_pfn_memslot_atomic(slots[i], dst_gfn);
+			if (is_error_noslot_pfn(pfns[i])) {
+				ret = -EFAULT;
+				goto out_release;
+			}
+			release_pfns[i] = true;
+		}
+	}
+
+	for (i = 0; i < nr; i++) {
+		struct runpv_mmu_clone_pte *record = &records[i];
+		unsigned int src_index = offset_in_page(record->src_ptep_pa) /
+					 sizeof(u64);
+		unsigned int dst_index = offset_in_page(record->dst_ptep_pa) /
+					 sizeof(u64);
+		u64 *src_sptep = src_sp->spt + src_index;
+		u64 *dst_sptep = dst_sp->spt + dst_index;
+		u64 src_pte = READ_ONCE(src_gpt[src_index]);
+		gfn_t dst_gfn = (record->dst_pte & PHYSICAL_PAGE_MASK) >> PAGE_SHIFT;
+
+		if (record->flags & RUNPV_MMU_CLONE_F_WRPROTECT) {
+			u64 old_spte, new_spte;
+
+			do {
+				old_spte = READ_ONCE(*src_sptep);
+				new_spte = old_spte & ~(u64)PT_WRITABLE_MASK;
+				if (old_spte == new_spte)
+					break;
+			} while (!try_cmpxchg64(src_sptep, &old_spte, new_spte));
+			WRITE_ONCE(src_gpt[src_index],
+				   src_pte & ~(u64)_PAGE_RW);
+		}
+
+		ret = mmu_set_spte_atomic(vcpu, slots[i], dst_sptep,
+					  runpv_mmu_get_access(dst_sp,
+							       record->dst_pte),
+					  dst_gfn, pfns[i], NULL);
+		WARN_ON_ONCE(ret != RET_PF_FIXED && ret != RET_PF_SPURIOUS);
+
+		WRITE_ONCE(dst_gpt[dst_index], record->dst_pte);
+	}
+	ret = 0;
+
+out_release:
+	for (i = 0; i < nr; i++) {
+		if (release_pfns[i])
+			kvm_release_pfn_clean(pfns[i]);
+	}
+	sp_write_unlock(kvm, second_sp);
+	sp_write_unlock(kvm, first_sp);
+out_srcu:
+	srcu_read_unlock(&kvm->arch.mmu_srcu, rcu_idx);
+	read_unlock(&kvm->mmu_invalidate_seq_lock);
+	return ret;
+}
+
 long runpv_mmu_ptep_test_and_clear_young(
 	struct kvm_vcpu *vcpu,
 	gpa_t ptep_pa
@@ -4726,6 +4912,8 @@ long runpv_mmu_op(struct kvm_vcpu *vcpu, long nr, long a0, long a1, long a2, lon
 	case RUNPV_HC_MMU_PUDP_TEST_AND_CLEAR_YOUNG:
 	case RUNPV_HC_MMU_PMDP_INVALIDATE_AD:
 		return -ENOSYS;
+	case RUNPV_HC_MMU_CLONE_PTE_BATCH:
+		return runpv_mmu_clone_pte_batch(vcpu, a0, a1);
 	default:
 		BUG();
 	}
