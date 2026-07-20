@@ -66,6 +66,7 @@
 #include <linux/coredump.h>
 #include <linux/time_namespace.h>
 #include <linux/user_events.h>
+#include <linux/ktime.h>
 
 #include <linux/uaccess.h>
 #include <asm/mmu_context.h>
@@ -75,6 +76,9 @@
 #include "internal.h"
 
 #include <trace/events/sched.h>
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+#include <trace/events/runpv_fork.h>
+#endif
 
 static int bprm_creds_from_file(struct linux_binprm *bprm);
 
@@ -981,15 +985,38 @@ static int exec_mmap(struct mm_struct *mm)
 	struct task_struct *tsk;
 	struct mm_struct *old_mm, *active_mm;
 	int ret;
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	bool trace_enabled = trace_runpv_exec_mmap_enabled();
+	unsigned long old_total_vm = 0;
+	u64 trace_old_mmput_ns = 0;
+	u64 trace_switch_mm_ns = 0;
+	u64 trace_start = 0;
+	u64 stage_start;
+
+	if (trace_enabled)
+		trace_start = ktime_get_mono_fast_ns();
+#endif
 
 	/* Notify parent that we're no longer interested in the old VM */
 	tsk = current;
 	old_mm = current->mm;
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled && old_mm)
+		old_total_vm = old_mm->total_vm;
+#endif
 	exec_mm_release(tsk, old_mm);
 
 	ret = down_write_killable(&tsk->signal->exec_update_lock);
-	if (ret)
+	if (ret) {
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+		if (trace_enabled)
+			trace_runpv_exec_mmap(current->pid, old_total_vm, ret,
+					      0, 0,
+					      ktime_get_mono_fast_ns() -
+							    trace_start);
+#endif
 		return ret;
+	}
 
 	if (old_mm) {
 		/*
@@ -1000,10 +1027,21 @@ static int exec_mmap(struct mm_struct *mm)
 		ret = mmap_read_lock_killable(old_mm);
 		if (ret) {
 			up_write(&tsk->signal->exec_update_lock);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+			if (trace_enabled)
+				trace_runpv_exec_mmap(current->pid,
+						      old_total_vm, ret, 0, 0,
+						      ktime_get_mono_fast_ns() -
+								    trace_start);
+#endif
 			return ret;
 		}
 	}
 
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled)
+		stage_start = ktime_get_mono_fast_ns();
+#endif
 	task_lock(tsk);
 	membarrier_exec_mmap(mm);
 
@@ -1027,15 +1065,39 @@ static int exec_mmap(struct mm_struct *mm)
 	lru_gen_add_mm(mm);
 	task_unlock(tsk);
 	lru_gen_use_mm(mm);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled)
+		trace_switch_mm_ns = ktime_get_mono_fast_ns() - stage_start;
+#endif
 	if (old_mm) {
 		mmap_read_unlock(old_mm);
 		BUG_ON(active_mm != old_mm);
 		setmax_mm_hiwater_rss(&tsk->signal->maxrss, old_mm);
 		mm_update_next_owner(old_mm);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+		if (trace_enabled)
+			stage_start = ktime_get_mono_fast_ns();
+#endif
 		mmput(old_mm);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+		if (trace_enabled) {
+			trace_old_mmput_ns = ktime_get_mono_fast_ns() - stage_start;
+			trace_runpv_exec_mmap(current->pid, old_total_vm, 0,
+					      trace_switch_mm_ns,
+					      trace_old_mmput_ns,
+					      ktime_get_mono_fast_ns() -
+							    trace_start);
+		}
+#endif
 		return 0;
 	}
 	mmdrop_lazy_tlb(active_mm);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled)
+		trace_runpv_exec_mmap(current->pid, old_total_vm, 0,
+				      trace_switch_mm_ns, 0,
+				      ktime_get_mono_fast_ns() - trace_start);
+#endif
 	return 0;
 }
 
@@ -1245,11 +1307,26 @@ int begin_new_exec(struct linux_binprm * bprm)
 {
 	struct task_struct *me = current;
 	int retval;
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	bool trace_enabled = trace_runpv_exec_enabled();
+	u64 trace_exec_mmap_ns = 0;
+	u64 trace_start = 0;
+	u64 stage_start;
+
+	if (trace_enabled)
+		trace_start = ktime_get_mono_fast_ns();
+#endif
 
 	/* Once we are committed compute the creds */
 	retval = bprm_creds_from_file(bprm);
-	if (retval)
+	if (retval) {
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+		if (trace_enabled)
+			trace_runpv_exec(current->pid, retval, 0,
+					 ktime_get_mono_fast_ns() - trace_start);
+#endif
 		return retval;
+	}
 
 	/*
 	 * Ensure all future errors are fatal.
@@ -1291,7 +1368,15 @@ int begin_new_exec(struct linux_binprm * bprm)
 	 * Release all of the old mmap stuff
 	 */
 	acct_arg_size(bprm, 0);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled)
+		stage_start = ktime_get_mono_fast_ns();
+#endif
 	retval = exec_mmap(bprm->mm);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled)
+		trace_exec_mmap_ns = ktime_get_mono_fast_ns() - stage_start;
+#endif
 	if (retval)
 		goto out;
 
@@ -1404,11 +1489,21 @@ int begin_new_exec(struct linux_binprm * bprm)
 		bprm->executable = NULL;
 		bprm->execfd = retval;
 	}
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled)
+		trace_runpv_exec(current->pid, 0, trace_exec_mmap_ns,
+				 ktime_get_mono_fast_ns() - trace_start);
+#endif
 	return 0;
 
 out_unlock:
 	up_write(&me->signal->exec_update_lock);
 out:
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled)
+		trace_runpv_exec(current->pid, retval, trace_exec_mmap_ns,
+				 ktime_get_mono_fast_ns() - trace_start);
+#endif
 	return retval;
 }
 EXPORT_SYMBOL(begin_new_exec);

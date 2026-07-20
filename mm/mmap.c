@@ -47,12 +47,16 @@
 #include <linux/oom.h>
 #include <linux/sched/mm.h>
 #include <linux/ksm.h>
+#include <linux/ktime.h>
 
 #include <linux/uaccess.h>
 #include <asm/cacheflush.h>
 #include <asm/tlb.h>
 #include <asm/mmu_context.h>
 
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+#include <trace/events/runpv_fork.h>
+#endif
 #define CREATE_TRACE_POINTS
 #include <trace/events/mmap.h>
 
@@ -3286,6 +3290,19 @@ void exit_mmap(struct mm_struct *mm)
 	unsigned long nr_accounted = 0;
 	MA_STATE(mas, &mm->mm_mt, 0, 0);
 	int count = 0;
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	bool trace_enabled = trace_runpv_exit_mmap_enabled();
+	unsigned long trace_total_vm = mm->total_vm;
+	int trace_map_count = mm->map_count;
+	u64 trace_free_pgtables_ns = 0;
+	u64 trace_remove_vmas_ns = 0;
+	u64 trace_unmap_vmas_ns = 0;
+	u64 trace_start = 0;
+	u64 stage_start;
+
+	if (trace_enabled)
+		trace_start = ktime_get_mono_fast_ns();
+#endif
 
 	/* mm's last user has gone, and its about to be pulled down */
 	mmu_notifier_release(mm);
@@ -3297,6 +3314,13 @@ void exit_mmap(struct mm_struct *mm)
 	if (!vma) {
 		/* Can happen if dup_mmap() received an OOM */
 		mmap_read_unlock(mm);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+		if (trace_enabled)
+			trace_runpv_exit_mmap(current->pid, trace_total_vm,
+					      trace_map_count, 0, 0, 0,
+					      ktime_get_mono_fast_ns() -
+							    trace_start);
+#endif
 		return;
 	}
 
@@ -3305,7 +3329,15 @@ void exit_mmap(struct mm_struct *mm)
 	tlb_gather_mmu_fullmm(&tlb, mm);
 	/* update_hiwater_rss(mm) here? but nobody should be looking */
 	/* Use ULONG_MAX here to ensure all VMAs in the mm are unmapped */
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled)
+		stage_start = ktime_get_mono_fast_ns();
+#endif
 	unmap_vmas(&tlb, &mas, vma, 0, ULONG_MAX, ULONG_MAX, false);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled)
+		trace_unmap_vmas_ns = ktime_get_mono_fast_ns() - stage_start;
+#endif
 	mmap_read_unlock(mm);
 
 	/*
@@ -3316,9 +3348,19 @@ void exit_mmap(struct mm_struct *mm)
 	mmap_write_lock(mm);
 	mt_clear_in_rcu(&mm->mm_mt);
 	mas_set(&mas, vma->vm_end);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled)
+		stage_start = ktime_get_mono_fast_ns();
+#endif
 	free_pgtables(&tlb, &mas, vma, FIRST_USER_ADDRESS,
 		      USER_PGTABLES_CEILING, true);
 	tlb_finish_mmu(&tlb);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled) {
+		trace_free_pgtables_ns = ktime_get_mono_fast_ns() - stage_start;
+		stage_start = ktime_get_mono_fast_ns();
+	}
+#endif
 
 	/*
 	 * Walk the list again, actually closing and freeing it, with preemption
@@ -3333,6 +3375,10 @@ void exit_mmap(struct mm_struct *mm)
 		count++;
 		cond_resched();
 	} while ((vma = mas_find(&mas, ULONG_MAX)) != NULL);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled)
+		trace_remove_vmas_ns = ktime_get_mono_fast_ns() - stage_start;
+#endif
 
 	BUG_ON(count != mm->map_count);
 
@@ -3340,6 +3386,14 @@ void exit_mmap(struct mm_struct *mm)
 	__mt_destroy(&mm->mm_mt);
 	mmap_write_unlock(mm);
 	vm_unacct_memory(nr_accounted);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled)
+		trace_runpv_exit_mmap(current->pid, trace_total_vm,
+				      trace_map_count, trace_unmap_vmas_ns,
+				      trace_free_pgtables_ns,
+				      trace_remove_vmas_ns,
+				      ktime_get_mono_fast_ns() - trace_start);
+#endif
 }
 
 /* Insert vm structure into process list sorted by address

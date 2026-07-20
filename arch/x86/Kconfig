@@ -863,6 +863,20 @@ config PVM_GUEST
 	  This option enables the kernel to run as a PVM guest under the PVM
 	  hypervisor.
 
+config RUNPV_FORK_LATENCY_TRACE
+	bool "RunPV fork/exec/exit latency tracepoints"
+	depends on TRACING_SUPPORT
+	select TRACING
+	default y
+	help
+	  Build low-overhead tracepoints for differential fork, fork+exec, and
+	  fork+exit measurements. The tracepoints have negligible overhead until
+	  enabled through tracefs and can be used in bare-metal, PVM, or regular
+	  hardware-virtualized guests. They report end-to-end fork latency
+	  together with page-table copying, exec address-space replacement, and
+	  exit teardown timings. Enable the runpv_fork tracepoint group in tracefs
+	  to collect samples.
+
 config ARCH_CPUIDLE_HALTPOLL
 	def_bool n
 	prompt "Disable host haltpoll when loading haltpoll driver"

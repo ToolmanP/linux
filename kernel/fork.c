@@ -99,6 +99,7 @@
 #include <linux/stackprotector.h>
 #include <linux/user_events.h>
 #include <linux/iommu.h>
+#include <linux/ktime.h>
 
 #include <asm/pgalloc.h>
 #include <linux/uaccess.h>
@@ -107,6 +108,10 @@
 #include <asm/tlbflush.h>
 
 #include <trace/events/sched.h>
+
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+#include <trace/events/runpv_fork.h>
+#endif
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/task.h>
@@ -652,6 +657,17 @@ static __latent_entropy int dup_mmap(struct mm_struct *mm,
 	LIST_HEAD(uf);
 	VMA_ITERATOR(old_vmi, oldmm, 0);
 	VMA_ITERATOR(vmi, mm, 0);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	bool trace_enabled = trace_runpv_dup_mmap_enabled();
+	unsigned int copied_vmas = 0;
+	u64 copy_page_range_ns = 0;
+	u64 flush_tlb_ns = 0;
+	u64 trace_start = 0;
+	u64 op_start;
+
+	if (trace_enabled)
+		trace_start = ktime_get_mono_fast_ns();
+#endif
 
 	uprobe_start_dup_mmap();
 	if (mmap_write_lock_killable(oldmm)) {
@@ -754,8 +770,20 @@ static __latent_entropy int dup_mmap(struct mm_struct *mm,
 			goto fail_nomem_vmi_store;
 
 		mm->map_count++;
-		if (!(tmp->vm_flags & VM_WIPEONFORK))
+		if (!(tmp->vm_flags & VM_WIPEONFORK)) {
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+			if (trace_enabled)
+				op_start = ktime_get_mono_fast_ns();
+#endif
 			retval = copy_page_range(tmp, mpnt);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+			if (trace_enabled) {
+				copy_page_range_ns += ktime_get_mono_fast_ns() -
+						      op_start;
+				copied_vmas++;
+			}
+#endif
+		}
 
 		if (tmp->vm_ops && tmp->vm_ops->open)
 			tmp->vm_ops->open(tmp);
@@ -771,11 +799,27 @@ loop_out:
 		mt_set_in_rcu(vmi.mas.tree);
 out:
 	mmap_write_unlock(mm);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled)
+		op_start = ktime_get_mono_fast_ns();
+#endif
 	flush_tlb_mm(oldmm);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled)
+		flush_tlb_ns = ktime_get_mono_fast_ns() - op_start;
+#endif
 	mmap_write_unlock(oldmm);
 	dup_userfaultfd_complete(&uf);
 fail_uprobe_end:
 	uprobe_end_dup_mmap();
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled)
+		trace_runpv_dup_mmap(current->pid, oldmm->total_vm,
+				     oldmm->map_count, copied_vmas,
+				     copy_page_range_ns, flush_tlb_ns,
+				     ktime_get_mono_fast_ns() - trace_start,
+				     retval);
+#endif
 	return retval;
 
 fail_nomem_vmi_store:
@@ -2871,6 +2915,15 @@ pid_t kernel_clone(struct kernel_clone_args *args)
 	struct task_struct *p;
 	int trace = 0;
 	pid_t nr;
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	bool latency_trace_enabled = trace_runpv_fork_enabled();
+	u64 copy_process_ns = 0;
+	u64 copy_process_start;
+	u64 trace_start = 0;
+
+	if (latency_trace_enabled)
+		trace_start = ktime_get_mono_fast_ns();
+#endif
 
 	/*
 	 * For legacy clone() calls, CLONE_PIDFD uses the parent_tid argument
@@ -2904,11 +2957,26 @@ pid_t kernel_clone(struct kernel_clone_args *args)
 			trace = 0;
 	}
 
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (latency_trace_enabled)
+		copy_process_start = ktime_get_mono_fast_ns();
+#endif
 	p = copy_process(NULL, trace, NUMA_NO_NODE, args);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (latency_trace_enabled)
+		copy_process_ns = ktime_get_mono_fast_ns() - copy_process_start;
+#endif
 	add_latent_entropy();
 
-	if (IS_ERR(p))
+	if (IS_ERR(p)) {
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+		if (latency_trace_enabled)
+			trace_runpv_fork(current->pid, 0, clone_flags,
+					 PTR_ERR(p), copy_process_ns,
+					 ktime_get_mono_fast_ns() - trace_start);
+#endif
 		return PTR_ERR(p);
+	}
 
 	/*
 	 * Do this prior waking up the new thread - the thread pointer
@@ -2947,6 +3015,12 @@ pid_t kernel_clone(struct kernel_clone_args *args)
 	}
 
 	put_pid(pid);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (latency_trace_enabled)
+		trace_runpv_fork(current->pid, nr, clone_flags, nr,
+				 copy_process_ns,
+				 ktime_get_mono_fast_ns() - trace_start);
+#endif
 	return nr;
 }
 

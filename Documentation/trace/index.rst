@@ -7,6 +7,7 @@ Linux Tracing Technologies
 
    ftrace-design
    tracepoint-analysis
+   runpv-fork-latency
    ftrace
    ftrace-uses
    fprobe

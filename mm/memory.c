@@ -78,8 +78,12 @@
 #include <linux/ptrace.h>
 #include <linux/vmalloc.h>
 #include <linux/sched/sysctl.h>
+#include <linux/ktime.h>
 
 #include <trace/events/kmem.h>
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+#include <trace/events/runpv_fork.h>
+#endif
 
 #include <asm/io.h>
 #include <asm/mmu_context.h>
@@ -1021,8 +1025,26 @@ copy_pte_range(struct vm_area_struct *dst_vma, struct vm_area_struct *src_vma,
 	int rss[NR_MM_COUNTERS];
 	swp_entry_t entry = (swp_entry_t){0};
 	struct folio *prealloc = NULL;
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	bool trace_enabled = trace_runpv_copy_pte_range_enabled();
+	unsigned int trace_cow_wrprotect = 0;
+	unsigned int trace_nonpresent = 0;
+	unsigned int trace_present = 0;
+	unsigned int trace_retries = 0;
+	unsigned int trace_pages = 0;
+	unsigned int trace_none = 0;
+	unsigned long trace_addr = addr;
+	u64 trace_start = 0;
+
+	if (trace_enabled)
+		trace_start = ktime_get_mono_fast_ns();
+#endif
 
 again:
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled)
+		trace_retries++;
+#endif
 	progress = 0;
 	init_rss_vec(rss);
 
@@ -1062,11 +1084,23 @@ again:
 				break;
 		}
 		ptent = ptep_get(src_pte);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+		if (trace_enabled)
+			trace_pages++;
+#endif
 		if (pte_none(ptent)) {
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+			if (trace_enabled)
+				trace_none++;
+#endif
 			progress++;
 			continue;
 		}
 		if (unlikely(!pte_present(ptent))) {
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+			if (trace_enabled)
+				trace_nonpresent++;
+#endif
 			ret = copy_nonpresent_pte(dst_mm, src_mm,
 						  dst_pte, src_pte,
 						  dst_vma, src_vma,
@@ -1087,6 +1121,16 @@ again:
 			 */
 			WARN_ON_ONCE(ret != -ENOENT);
 		}
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+		if (trace_enabled) {
+			pte_t trace_pte = ptep_get(src_pte);
+
+			trace_present++;
+			if (is_cow_mapping(src_vma->vm_flags) &&
+			    pte_write(trace_pte))
+				trace_cow_wrprotect++;
+		}
+#endif
 		/* copy_present_pte() will clear `*prealloc' if consumed */
 		ret = copy_present_pte(dst_vma, src_vma, dst_pte, src_pte,
 				       addr, rss, &prealloc);
@@ -1126,8 +1170,10 @@ again:
 		goto out;
 	} else if (ret ==  -EAGAIN) {
 		prealloc = page_copy_prealloc(src_mm, src_vma, addr);
-		if (!prealloc)
-			return -ENOMEM;
+		if (!prealloc) {
+			ret = -ENOMEM;
+			goto out;
+		}
 	} else if (ret) {
 		VM_WARN_ON_ONCE(1);
 	}
@@ -1140,6 +1186,17 @@ again:
 out:
 	if (unlikely(prealloc))
 		folio_put(prealloc);
+#ifdef CONFIG_RUNPV_FORK_LATENCY_TRACE
+	if (trace_enabled)
+		trace_runpv_copy_pte_range(current->pid, trace_addr,
+					   trace_pages, trace_present,
+					   trace_cow_wrprotect,
+					   trace_nonpresent, trace_none,
+					   trace_retries - 1,
+					   ktime_get_mono_fast_ns() -
+							 trace_start,
+					   ret);
+#endif
 	return ret;
 }
 
